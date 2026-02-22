@@ -1,0 +1,113 @@
+@import "tailwindcss";
+
+@theme {
+  /* Light professional palette */
+  --color-background: #f8f9fb;
+  --color-surface: #ffffff;
+  --color-surface-hover: #f3f4f6;
+  --color-surface-active: #eef0f3;
+  --color-border: #e5e7eb;
+  --color-border-hover: #d1d5db;
+  --color-text-primary: #111827;
+  --color-text-secondary: #4b5563;
+  --color-text-muted: #9ca3af;
+  --color-text-inverse: #ffffff;
+
+  /* Brand */
+  --color-accent: #f7931a;
+  --color-accent-hover: #e8850f;
+  --color-accent-dim: #fef3e2;
+  --color-accent-subtle: #fdf6ec;
+
+  /* Sidebar */
+  --color-sidebar: #1a1a2e;
+  --color-sidebar-hover: #252542;
+  --color-sidebar-active: #2d2d50;
+  --color-sidebar-text: #b0b0cc;
+  --color-sidebar-text-active: #ffffff;
+  --color-sidebar-border: #2a2a45;
+
+  /* Semantic */
+  --color-danger: #ef4444;
+  --color-danger-dim: #fef2f2;
+  --color-danger-text: #b91c1c;
+  --color-warning: #f59e0b;
+  --color-warning-dim: #fffbeb;
+  --color-warning-text: #92400e;
+  --color-success: #10b981;
+  --color-success-dim: #ecfdf5;
+  --color-success-text: #065f46;
+  --color-info: #3b82f6;
+  --color-info-dim: #eff6ff;
+  --color-info-text: #1e40af;
+  --color-critical: #dc2626;
+  --color-critical-dim: #fef2f2;
+  --color-critical-text: #991b1b;
+
+  /* Typography */
+  --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+
+  /* Shadows */
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.06), 0 2px 4px -2px rgba(0, 0, 0, 0.04);
+}
+
+@layer base {
+  * {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+  }
+
+  body {
+    background-color: var(--color-background);
+    color: var(--color-text-primary);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    font-size: 14px;
+    line-height: 1.5;
+  }
+}
+
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #d1d5db;
+  border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #9ca3af;
+}
+
+/* Focus ring utility */
+.focus-ring {
+  outline: none;
+}
+.focus-ring:focus-visible {
+  box-shadow: 0 0 0 2px var(--color-background), 0 0 0 4px var(--color-accent);
+}
+
+/* Smooth transitions */
+button, a, input, select, textarea {
+  transition: all 150ms ease;
+}
+
+/* Select styling */
+select {
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%239ca3af' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  padding-right: 28px;
+}
