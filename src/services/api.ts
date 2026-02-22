@@ -1,5 +1,4 @@
 import { supabase } from '@/lib/supabase'
-import { analyzeEmail as classifyEmail } from '@/lib/classifier'
 import type { Email, EmailAnalysis, DashboardStats, PatternAlert, ResponseTemplate } from '@/types'
 
 const SYNC_SERVER_URL = import.meta.env.VITE_SYNC_SERVER_URL || 'http://localhost:3001'
@@ -56,67 +55,31 @@ export const api = {
     return data as Email
   },
 
-  // ─── ANALYSIS ───────────────────────────────────────────────
+  // ─── ANALYSIS (Gemini AI via server) ────────────────────────
 
   analyzeEmail: async (id: string) => {
-    const { data: email, error: fetchError } = await supabase
-      .from('emails')
-      .select('*')
-      .eq('id', id)
-      .single()
-
-    if (fetchError || !email) throw new Error(fetchError?.message || 'E-mail não encontrado')
-
-    const analysis = await classifyEmail(email as Email)
-
-    const { error: updateError } = await supabase
-      .from('emails')
-      .update({
-        category: analysis.category,
-        urgency: analysis.urgency,
-        risk: analysis.risk,
-        suggestedResponse: analysis.suggestedResponse,
-        internalAction: analysis.internalAction,
-        isRecurrent: analysis.isRecurrent,
-        recurrentPattern: analysis.recurrentPattern,
-        status: 'em_analise',
-      })
-      .eq('id', id)
-
-    if (updateError) throw new Error(updateError.message)
-    return analysis as EmailAnalysis
+    const res = await fetch(`${SYNC_SERVER_URL}/api/analyze`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ emailId: id }),
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ message: res.statusText }))
+      throw new Error(err.message || 'Erro na análise AI')
+    }
+    return res.json() as Promise<EmailAnalysis>
   },
 
   analyzeAll: async () => {
-    const { data: emails, error } = await supabase
-      .from('emails')
-      .select('*')
-      .is('category', null)
-
-    if (error) throw new Error(error.message)
-
-    let analyzed = 0
-    for (const email of emails || []) {
-      try {
-        const analysis = await classifyEmail(email as Email)
-        await supabase
-          .from('emails')
-          .update({
-            category: analysis.category,
-            urgency: analysis.urgency,
-            risk: analysis.risk,
-            suggestedResponse: analysis.suggestedResponse,
-            internalAction: analysis.internalAction,
-            isRecurrent: analysis.isRecurrent,
-            recurrentPattern: analysis.recurrentPattern,
-            status: 'em_analise',
-          })
-          .eq('id', email.id)
-        analyzed++
-      } catch { /* skip individual failures */ }
+    const res = await fetch(`${SYNC_SERVER_URL}/api/analyze-all`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ message: res.statusText }))
+      throw new Error(err.message || 'Erro na análise em massa')
     }
-
-    return { analyzed }
+    return res.json() as Promise<{ analyzed: number; total?: number }>
   },
 
   // ─── STATS ──────────────────────────────────────────────────
