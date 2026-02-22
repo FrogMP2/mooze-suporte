@@ -182,23 +182,16 @@ export const api = {
   // ─── RESPOND ──────────────────────────────────────────────
 
   sendResponse: async (emailId: string, content: string) => {
-    const { error: insertError } = await supabase
-      .from('responses')
-      .insert({ emailId, content })
-
-    if (insertError) throw new Error(insertError.message)
-
-    const { error: updateError } = await supabase
-      .from('emails')
-      .update({
-        status: 'respondido',
-        respondedAt: new Date().toISOString(),
-        respondedBy: 'operador',
-      })
-      .eq('id', emailId)
-
-    if (updateError) throw new Error(updateError.message)
-    return { success: true }
+    const res = await fetch(`${SYNC_SERVER_URL}/api/send-reply`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ emailId, content }),
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ message: res.statusText }))
+      throw new Error(err.message || 'Erro ao enviar resposta')
+    }
+    return res.json() as Promise<{ success: boolean }>
   },
 
   // ─── SETTINGS ─────────────────────────────────────────────
