@@ -10,12 +10,16 @@ import {
   Edit3,
   CheckCircle2,
   Sparkles,
+  ChevronDown,
+  ChevronRight,
+  MessageSquare,
 } from 'lucide-react'
 import { Card, CardBody } from '@/components/ui/Card'
 import { Badge, UrgencyBadge, CategoryBadge, RiskBadge } from '@/components/ui/Badge'
 import { useEmailStore } from '@/store/emailStore'
 import { api } from '@/services/api'
 import { cn, timeAgo, formatDate } from '@/lib/utils'
+import { parseEmailThread } from '@/lib/emailThread'
 import { CATEGORY_LABELS, URGENCY_LABELS } from '@/types'
 import type { Email, EmailCategory, UrgencyLevel, EmailStatus } from '@/types'
 
@@ -205,12 +209,8 @@ export default function Emails() {
               </div>
             </div>
 
-            {/* Email body */}
-            <div className="bg-surface border border-border rounded-xl shadow-xs p-5">
-              <div className="text-text-secondary text-[13px] leading-relaxed whitespace-pre-wrap">
-                {selectedEmail.body}
-              </div>
-            </div>
+            {/* Email body (thread-aware) */}
+            <EmailBody body={selectedEmail.body} />
 
             {/* Internal Action (if exists) */}
             {selectedEmail.internalAction && (
@@ -298,6 +298,61 @@ export default function Emails() {
           </div>
         )}
       </div>
+    </div>
+  )
+}
+
+// ─── Email Body with Thread Parsing ──────────────────────────
+
+function EmailBody({ body }: { body: string }) {
+  const [showThread, setShowThread] = useState(false)
+  const thread = parseEmailThread(body || '')
+
+  const latestMessage = thread.find((m) => m.isLatest)
+  const olderMessages = thread.filter((m) => !m.isLatest)
+
+  return (
+    <div className="space-y-3">
+      {/* Latest message */}
+      <div className="bg-surface border border-border rounded-xl shadow-xs p-5">
+        <div className="text-text-secondary text-[13px] leading-relaxed whitespace-pre-wrap">
+          {latestMessage?.content || body}
+        </div>
+      </div>
+
+      {/* Thread history (collapsible) */}
+      {olderMessages.length > 0 && (
+        <div className="bg-surface border border-border rounded-xl shadow-xs overflow-hidden">
+          <button
+            onClick={() => setShowThread(!showThread)}
+            className="w-full flex items-center gap-2 px-4 py-2.5 text-text-muted hover:text-text-secondary hover:bg-surface-hover transition-colors"
+          >
+            {showThread ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+            <MessageSquare size={14} />
+            <span className="text-[12px] font-medium">
+              {olderMessages.length} {olderMessages.length === 1 ? 'mensagem anterior' : 'mensagens anteriores'}
+            </span>
+          </button>
+
+          {showThread && (
+            <div className="border-t border-border divide-y divide-border">
+              {olderMessages.map((msg, i) => (
+                <div key={i} className="px-5 py-4">
+                  {(msg.from || msg.date) && (
+                    <div className="flex items-center gap-2 mb-2 text-[11px] text-text-muted">
+                      {msg.from && <span className="font-medium text-text-secondary">{msg.from}</span>}
+                      {msg.date && <span>· {msg.date}</span>}
+                    </div>
+                  )}
+                  <div className="text-text-muted text-[12px] leading-relaxed whitespace-pre-wrap pl-3 border-l-2 border-border">
+                    {msg.content}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }
