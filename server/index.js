@@ -476,7 +476,7 @@ Se o operador pedir para ENVIAR ou DISPARAR emails para múltiplos destinatário
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { temperature: 0.4, maxOutputTokens: 4096 },
+        generationConfig: { temperature: 0.4, maxOutputTokens: 16384 },
       }),
     })
 
