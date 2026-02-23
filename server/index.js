@@ -1,7 +1,7 @@
 import express from 'express'
 import cors from 'cors'
 import dotenv from 'dotenv'
-import nodemailer from 'nodemailer'
+// nodemailer removed — using Resend HTTP API for email sending
 import { syncEmails, testImapConnection } from './imap.js'
 import { supabase } from './supabase.js'
 
@@ -14,21 +14,34 @@ const SYNC_INTERVAL = parseInt(process.env.SYNC_INTERVAL || '5') * 60 * 1000 // 
 app.use(cors())
 app.use(express.json())
 
-// ─── SMTP TRANSPORT ──────────────────────────────────────────
+// ─── RESEND EMAIL API ────────────────────────────────────────
 
-function getSmtpTransport() {
-  const port = parseInt(process.env.SMTP_PORT || '587')
-  return nodemailer.createTransport({
-    host: process.env.SMTP_HOST || process.env.IMAP_HOST,
-    port,
-    secure: port === 465,
-    auth: {
-      user: process.env.SMTP_USER || process.env.IMAP_USER,
-      pass: process.env.SMTP_PASS || process.env.IMAP_PASS,
+async function sendEmail({ from, to, subject, text, replyTo, headers }) {
+  const apiKey = process.env.RESEND_API_KEY
+  if (!apiKey) throw new Error('RESEND_API_KEY não configurada')
+
+  const res = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
     },
-    tls: { rejectUnauthorized: false },
-    connectionTimeout: 10000,
+    body: JSON.stringify({
+      from: from || `Mooze Suporte <${process.env.RESEND_FROM || 'suporte@mooze.app'}>`,
+      to: [to],
+      subject,
+      text,
+      reply_to: replyTo,
+      headers,
+    }),
   })
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(`Resend API error: ${err.message || res.statusText}`)
+  }
+
+  return res.json()
 }
 
 // ─── SYNC (IMAP → Supabase) ──────────────────────────────────
@@ -60,19 +73,19 @@ app.post('/api/send-reply', async (req, res) => {
       return res.status(404).json({ message: 'E-mail não encontrado' })
     }
 
-    // Send via SMTP
-    const transport = getSmtpTransport()
-    await transport.sendMail({
-      from: process.env.SMTP_USER || process.env.IMAP_USER,
+    // Send via Resend API
+    await sendEmail({
       to: email.from,
       subject: `Re: ${email.subject || ''}`,
       text: content,
-      inReplyTo: email.messageId,
-      references: email.messageId,
+      headers: {
+        'In-Reply-To': email.messageId,
+        'References': email.messageId,
+      },
     })
 
     // Save response + update status in Supabase
-    const sentUser = process.env.SMTP_USER || process.env.IMAP_USER
+    const sentUser = process.env.RESEND_FROM || 'suporte@mooze.app'
     await Promise.all([
       supabase.from('responses').insert({ emailId, content }),
       supabase.from('emails').update({
@@ -95,10 +108,10 @@ app.post('/api/send-reply', async (req, res) => {
       }),
     ])
 
-    console.log(`[SMTP] Resposta enviada para ${email.from}`)
+    console.log(`[RESEND] Resposta enviada para ${email.from}`)
     res.json({ success: true })
   } catch (error) {
-    console.error('[SMTP] Erro ao enviar:', error.message)
+    console.error('[RESEND] Erro ao enviar:', error.message)
     res.status(500).json({ message: 'Erro ao enviar resposta', error: error.message })
   }
 })
