@@ -1,7 +1,7 @@
 import express from 'express'
 import cors from 'cors'
 import dotenv from 'dotenv'
-// nodemailer removed — using Resend HTTP API for email sending
+import nodemailer from 'nodemailer'
 import { syncEmails, testImapConnection } from './imap.js'
 import { supabase } from './supabase.js'
 
@@ -14,11 +14,11 @@ const SYNC_INTERVAL = parseInt(process.env.SYNC_INTERVAL || '5') * 60 * 1000 // 
 app.use(cors())
 app.use(express.json())
 
-// ─── RESEND EMAIL API ────────────────────────────────────────
+// ─── EMAIL SENDING (Resend API or SMTP fallback) ────────────
 
-async function sendEmail({ from, to, subject, text, replyTo, headers }) {
+async function sendEmailViaResend({ to, subject, text, headers }) {
   const apiKey = process.env.RESEND_API_KEY
-  if (!apiKey) throw new Error('RESEND_API_KEY não configurada')
+  if (!apiKey) return false
 
   const res = await fetch('https://api.resend.com/emails', {
     method: 'POST',
@@ -27,11 +27,10 @@ async function sendEmail({ from, to, subject, text, replyTo, headers }) {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      from: from || `Mooze Suporte <${process.env.RESEND_FROM || 'suporte@mooze.app'}>`,
+      from: `Mooze Suporte <${process.env.RESEND_FROM || 'suporte@mooze.app'}>`,
       to: [to],
       subject,
       text,
-      reply_to: replyTo,
       headers,
     }),
   })
@@ -40,8 +39,45 @@ async function sendEmail({ from, to, subject, text, replyTo, headers }) {
     const err = await res.json().catch(() => ({}))
     throw new Error(`Resend API error: ${err.message || res.statusText}`)
   }
+  console.log('[RESEND] Email enviado para', to)
+  return true
+}
 
-  return res.json()
+async function sendEmailViaSMTP({ to, subject, text, inReplyTo, references }) {
+  const transport = nodemailer.createTransport({
+    host: process.env.SMTP_HOST || process.env.IMAP_HOST,
+    port: parseInt(process.env.SMTP_PORT || '465'),
+    secure: true,
+    auth: {
+      user: process.env.SMTP_USER || process.env.IMAP_USER,
+      pass: process.env.SMTP_PASS || process.env.IMAP_PASS,
+    },
+    tls: { rejectUnauthorized: false },
+    connectionTimeout: 10000,
+  })
+
+  await transport.sendMail({
+    from: process.env.SMTP_USER || process.env.IMAP_USER,
+    to,
+    subject,
+    text,
+    inReplyTo,
+    references,
+  })
+  console.log('[SMTP] Email enviado para', to)
+  return true
+}
+
+async function sendEmail({ to, subject, text, inReplyTo, references }) {
+  // Try Resend first (works on cloud), then SMTP fallback (works locally)
+  try {
+    const sent = await sendEmailViaResend({ to, subject, text, headers: { 'In-Reply-To': inReplyTo, 'References': references } })
+    if (sent) return
+  } catch (e) {
+    console.log('[EMAIL] Resend falhou, tentando SMTP...', e.message)
+  }
+
+  await sendEmailViaSMTP({ to, subject, text, inReplyTo, references })
 }
 
 // ─── SYNC (IMAP → Supabase) ──────────────────────────────────
@@ -73,15 +109,13 @@ app.post('/api/send-reply', async (req, res) => {
       return res.status(404).json({ message: 'E-mail não encontrado' })
     }
 
-    // Send via Resend API
+    // Send email (tries Resend API first, then SMTP fallback)
     await sendEmail({
       to: email.from,
       subject: `Re: ${email.subject || ''}`,
       text: content,
-      headers: {
-        'In-Reply-To': email.messageId,
-        'References': email.messageId,
-      },
+      inReplyTo: email.messageId,
+      references: email.messageId,
     })
 
     // Save response + update status in Supabase
