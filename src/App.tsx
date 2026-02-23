@@ -9,6 +9,7 @@ import Analytics from '@/pages/Analytics'
 import Templates from '@/pages/Templates'
 import Security from '@/pages/Security'
 import Settings from '@/pages/Settings'
+import Financeiro from '@/pages/Financeiro'
 
 export default function App() {
   return (
@@ -17,6 +18,7 @@ export default function App() {
         <Routes>
           <Route element={<Layout />}>
             <Route path="/" element={<Dashboard />} />
+            <Route path="/financeiro" element={<Financeiro />} />
             <Route path="/emails" element={<Emails />} />
             <Route path="/agent" element={<Agent />} />
             <Route path="/alerts" element={<Alerts />} />

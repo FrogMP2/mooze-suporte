@@ -9,6 +9,7 @@ import {
   AlertTriangle,
   Shield,
   LogOut,
+  TrendingUp,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { supabase } from '@/lib/supabase'
@@ -16,6 +17,7 @@ import { useEffect, useState } from 'react'
 
 const navItems = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard', section: 'start' },
+  { to: '/financeiro', icon: TrendingUp, label: 'Financeiro' },
   { to: '/emails', icon: Mail, label: 'E-mails' },
   { to: '/agent', icon: Brain, label: 'Agente IA' },
   { to: '/alerts', icon: AlertTriangle, label: 'Alertas', section: 'start' },

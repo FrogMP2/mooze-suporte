@@ -86,6 +86,10 @@ app.post('/api/sync', async (req, res) => {
   try {
     const result = await syncEmails()
     res.json(result)
+    // Auto-analyze new emails in background after responding
+    if (result.synced > 0) {
+      autoAnalyzeNew().catch(err => console.error('[SYNC] Analyze error:', err.message))
+    }
   } catch (error) {
     console.error('Sync error:', error)
     res.status(500).json({ message: 'Erro ao sincronizar e-mails', error: error.message })
@@ -236,14 +240,25 @@ app.post('/api/analyze', async (req, res) => {
       return res.status(404).json({ message: 'E-mail não encontrado' })
     }
 
-    // 2. Get past emails that HAVE responses (learning context)
+    // 2. Load knowledge base for matching
+    const { data: kbEntries } = await supabase
+      .from('knowledge_base')
+      .select('category, title, content')
+      .order('updatedAt', { ascending: false })
+      .limit(60)
+
+    const kbContext = (kbEntries || []).length > 0
+      ? (kbEntries || []).map(k => `### [${k.category}] ${k.title}\n${k.content}`).join('\n\n')
+      : 'Sem entradas na base de conhecimento ainda.'
+
+    // 3. Get past emails that HAVE responses (learning context)
     const { data: pastEmails } = await supabase
       .from('responses')
       .select('emailId, content, emails!inner(subject, body, category, from, fromName)')
       .order('createdAt', { ascending: false })
       .limit(30)
 
-    // 3. Get emails in the same category for recurrence check
+    // 4. Get emails in the same category for recurrence check
     const { data: similarEmails } = await supabase
       .from('emails')
       .select('id, subject, from, fromName, date')
@@ -278,6 +293,9 @@ Assunto: ${email.subject || 'Sem assunto'}
 Corpo:
 ${(email.body || '').slice(0, 2000)}
 
+## Base de Conhecimento (respostas padronizadas do suporte Mooze):
+${kbContext}
+
 ## Histórico de respostas anteriores (aprenda o tom e estilo):
 ${pastExamples || 'Nenhum histórico disponível ainda.'}
 
@@ -288,14 +306,17 @@ ${(similarEmails || []).slice(0, 20).map((e) => `- ${e.subject} (de ${e.fromName
 1. Classifique o email em UMA das categorias: problema_tecnico, duvida_educacional, erro_transacao, confusao_taxas, problema_sincronizacao, questao_liquid, suspeita_bug, reclamacao, sugestao_melhoria, seguranca, perda_acesso, outro
 2. Determine a urgência: baixa, media, alta, critica
 3. Determine o risco: nenhum, tecnico, reputacional, juridico
-4. Escreva uma resposta PERSONALIZADA para este email específico (não genérica!)
+4. Verifique se existe na Base de Conhecimento uma entrada que responde diretamente ao problema do usuário:
+   - Se SIM: kbMatched=true, use o conteúdo da KB como base para suggestedResponse (personalize o tom mas mantenha as instruções/links)
+   - Se NÃO (problema inédito, caso complexo, banimento, jurídico, etc): kbMatched=false, escreva resposta do zero
+5. Escreva uma resposta PERSONALIZADA para este email específico (não genérica!)
    - Use o tom e estilo das respostas anteriores se disponíveis
    - Aborde ESPECIFICAMENTE o problema descrito pelo usuário
    - Inclua passos concretos para resolver a situação dele
    - Assine como "Equipe Mooze"
-5. Descreva ações internas que a equipe deve tomar
-6. Verifique se é um problema recorrente baseado nos emails similares
-7. Extraia as palavras-chave relevantes do email
+6. Descreva ações internas que a equipe deve tomar
+7. Verifique se é um problema recorrente baseado nos emails similares
+8. Extraia as palavras-chave relevantes do email
 
 Responda APENAS com JSON válido neste formato:
 {
@@ -303,6 +324,7 @@ Responda APENAS com JSON válido neste formato:
   "urgency": "nivel_aqui",
   "risk": "risco_aqui",
   "summary": "resumo curto do problema em 1 frase",
+  "kbMatched": true,
   "suggestedResponse": "resposta completa e personalizada aqui",
   "internalAction": "ações internas para a equipe",
   "isRecurrent": false,
@@ -316,6 +338,7 @@ Responda APENAS com JSON válido neste formato:
     const analysis = await callGemini(prompt)
 
     // 7. Save analysis to Supabase
+    const kbPrefix = analysis.kbMatched ? '[KB:yes] ' : '[KB:no] '
     await supabase
       .from('emails')
       .update({
@@ -323,14 +346,14 @@ Responda APENAS com JSON válido neste formato:
         urgency: analysis.urgency,
         risk: analysis.risk,
         suggestedResponse: analysis.suggestedResponse,
-        internalAction: analysis.internalAction,
+        internalAction: kbPrefix + (analysis.internalAction || ''),
         isRecurrent: analysis.isRecurrent || false,
         recurrentPattern: analysis.recurrentPattern || null,
         status: 'em_analise',
       })
       .eq('id', emailId)
 
-    console.log(`[AI] Email ${emailId} → ${analysis.category} (${analysis.urgency})`)
+    console.log(`[AI] Email ${emailId} → ${analysis.category} (${analysis.urgency}) KB:${analysis.kbMatched ? 'matched' : 'no_match'}`)
 
     res.json({
       emailId,
@@ -719,6 +742,40 @@ app.get('/', (req, res) => {
   res.json({ status: 'ok', service: 'mooze-suporte-sync' })
 })
 
+// ─── AUTO-ANALYZE ─────────────────────────────────────────────
+
+async function autoAnalyzeNew() {
+  try {
+    const { data: emails } = await supabase
+      .from('emails')
+      .select('id')
+      .is('category', null)
+      .eq('folder', 'INBOX')
+      .order('date', { ascending: false })
+      .limit(10)
+
+    if (!emails?.length) return
+    console.log(`[AUTO-ANALYZE] Analisando ${emails.length} novos emails...`)
+
+    for (const email of emails) {
+      try {
+        await fetch(`http://localhost:${PORT}/api/analyze`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ emailId: email.id }),
+        })
+        // 3s delay between calls to respect Gemini rate limits
+        await new Promise(resolve => setTimeout(resolve, 3000))
+      } catch (e) {
+        console.error(`[AUTO-ANALYZE] Falha ao analisar ${email.id}:`, e.message)
+      }
+    }
+    console.log(`[AUTO-ANALYZE] Concluído`)
+  } catch (error) {
+    console.error('[AUTO-ANALYZE] Erro:', error.message)
+  }
+}
+
 // ─── AUTO-SYNC ────────────────────────────────────────────────
 
 async function autoSync() {
@@ -726,6 +783,8 @@ async function autoSync() {
     const result = await syncEmails()
     if (result.synced > 0) {
       console.log(`[AUTO-SYNC] ${result.synced} novos e-mails sincronizados`)
+      // Auto-analyze new emails in background
+      autoAnalyzeNew().catch(err => console.error('[AUTO-SYNC] Analyze error:', err.message))
     }
   } catch (error) {
     console.error('[AUTO-SYNC] Erro:', error.message)

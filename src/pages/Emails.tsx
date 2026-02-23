@@ -189,7 +189,11 @@ export default function Emails() {
               <p className="text-text-muted text-[13px]">Carregando...</p>
             </div>
           ) : filtered.length > 0 ? (
-            filtered.map((email) => (
+            filtered.map((email) => {
+              const isKbMatch = email.internalAction?.startsWith('[KB:yes]')
+              const isKbNoMatch = email.internalAction?.startsWith('[KB:no]')
+              const needsAttention = isKbNoMatch && (email.status === 'novo' || email.status === 'em_analise')
+              return (
               <div
                 key={email.id}
                 onClick={() => { selectEmail(email); setResponseText(email.suggestedResponse || ''); setEditingResponse(false); setResponseSource(null) }}
@@ -197,6 +201,10 @@ export default function Emails() {
                   'px-3 py-2.5 rounded-lg border cursor-pointer transition-all',
                   selectedEmail?.id === email.id
                     ? 'bg-accent-subtle border-accent/25 shadow-xs'
+                    : isKbMatch
+                    ? 'bg-[#0d2a1a] border-[#1a5c30]/60 hover:border-[#1a5c30]'
+                    : needsAttention
+                    ? 'bg-[#2a0d0d] border-[#8b1a1a]/60 hover:border-[#8b1a1a]'
                     : 'bg-surface border-transparent hover:border-border hover:bg-surface-hover',
                 )}
               >
@@ -207,7 +215,11 @@ export default function Emails() {
                       {email.folder === 'SENT' ? `Para: ${email.to}` : (email.fromName || email.from)}
                     </p>
                   </div>
-                  <span className="text-text-muted text-[10px] whitespace-nowrap">{timeAgo(email.date)}</span>
+                  <div className="flex items-center gap-1.5">
+                    {isKbMatch && <span title="Resposta na base de conhecimento" className="text-[9px] font-bold text-green-400 bg-green-900/40 px-1 py-0.5 rounded">KB✓</span>}
+                    {needsAttention && <span title="Sem resposta na KB - prioridade alta" className="text-[9px] font-bold text-red-400 bg-red-900/40 px-1 py-0.5 rounded">!</span>}
+                    <span className="text-text-muted text-[10px] whitespace-nowrap">{timeAgo(email.date)}</span>
+                  </div>
                 </div>
                 <p className="text-text-secondary text-[12px] truncate">{email.subject}</p>
                 {(email.urgency || email.category) && (
@@ -217,7 +229,7 @@ export default function Emails() {
                   </div>
                 )}
               </div>
-            ))
+            )})
           ) : (
             <div className="py-16 text-center">
               <Mail size={24} className="mx-auto text-text-muted mb-2" />
@@ -274,11 +286,33 @@ export default function Emails() {
             {/* Email body (thread-aware) */}
             <EmailBody body={selectedEmail.body} />
 
+            {/* KB Match banner */}
+            {selectedEmail.internalAction?.startsWith('[KB:yes]') && (
+              <div className="bg-[#0d2a1a] border border-green-800/40 rounded-xl px-5 py-3 flex items-center gap-3">
+                <span className="text-green-400 text-lg">✓</span>
+                <div>
+                  <p className="text-green-300 text-[12px] font-semibold">Resposta encontrada na Base de Conhecimento</p>
+                  <p className="text-text-muted text-[11px]">A resposta sugerida está baseada no material de treinamento</p>
+                </div>
+              </div>
+            )}
+            {selectedEmail.internalAction?.startsWith('[KB:no]') && (
+              <div className="bg-[#2a0d0d] border border-red-800/40 rounded-xl px-5 py-3 flex items-center gap-3">
+                <span className="text-red-400 text-lg">!</span>
+                <div>
+                  <p className="text-red-300 text-[12px] font-semibold">Sem resposta padrão — revisão manual necessária</p>
+                  <p className="text-text-muted text-[11px]">Este caso não tem correspondência na base de conhecimento</p>
+                </div>
+              </div>
+            )}
+
             {/* Internal Action (if exists) */}
             {selectedEmail.internalAction && (
               <div className="bg-warning-dim border border-warning/20 rounded-xl px-5 py-3">
                 <p className="text-warning-text text-[11px] font-semibold mb-0.5">Ação Interna Sugerida</p>
-                <p className="text-text-secondary text-[13px]">{selectedEmail.internalAction}</p>
+                <p className="text-text-secondary text-[13px]">
+                  {selectedEmail.internalAction.replace(/^\[KB:(yes|no)\]\s*/, '')}
+                </p>
               </div>
             )}
 
