@@ -226,6 +226,21 @@ export const api = {
     return res.json() as Promise<{ success: boolean }>
   },
 
+  // ─── AGENT ACTIONS ───────────────────────────────────────
+
+  multiAction: async (actions: object[]) => {
+    const res = await fetch(`${SYNC_SERVER_URL}/api/multi-action`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ actions }),
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ message: res.statusText }))
+      throw new Error(err.message || 'Erro ao executar ações')
+    }
+    return res.json() as Promise<{ succeeded: number; total: number; results: { type: string; emailId?: string; success: boolean; error?: string }[] }>
+  },
+
   // ─── KNOWLEDGE BASE ──────────────────────────────────────
 
   getKnowledge: async () => {

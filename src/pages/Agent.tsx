@@ -30,6 +30,29 @@ interface BulkSendData {
   reason: string
 }
 
+interface AgentAction {
+  type: 'reply_email' | 'move_email' | 'delete_email' | 'bulk_send'
+  emailId?: string
+  subject?: string
+  body?: string
+  folder?: string
+  recipients?: { email: string; name: string }[]
+}
+
+interface MultiActionData {
+  action: 'multi_action'
+  summary: string
+  actions: AgentAction[]
+  reason: string
+}
+
+const ACTION_LABELS: Record<string, string> = {
+  reply_email: 'Responder email',
+  move_email: 'Mover email',
+  delete_email: 'Apagar email',
+  bulk_send: 'Disparar emails',
+}
+
 const WELCOME_MESSAGE: ChatMessage = {
   id: 'welcome',
   userId: '',
@@ -63,6 +86,8 @@ export default function Agent() {
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const [pendingBulkSend, setPendingBulkSend] = useState<BulkSendData | null>(null)
   const [sendingBulk, setSendingBulk] = useState(false)
+  const [pendingMultiAction, setPendingMultiAction] = useState<MultiActionData | null>(null)
+  const [executingMulti, setExecutingMulti] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -112,25 +137,31 @@ export default function Agent() {
 
       const data = await res.json()
 
-      // Check if the response is a bulk_send action (JSON from Gemini)
+      // Parse JSON actions from agent response
       let bulkSendData: BulkSendData | null = null
+      let multiActionData: MultiActionData | null = null
       try {
-        // Strip markdown code fences if present (```json ... ``` or ``` ... ```)
         let jsonStr = data.response.trim()
         const codeBlockMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/)
-        if (codeBlockMatch) {
-          jsonStr = codeBlockMatch[1].trim()
-        }
+        if (codeBlockMatch) jsonStr = codeBlockMatch[1].trim()
         const parsed = JSON.parse(jsonStr)
         if (parsed.action === 'bulk_send' && parsed.recipients?.length) {
           bulkSendData = parsed
+        } else if (parsed.action === 'multi_action' && parsed.actions?.length) {
+          multiActionData = parsed
         }
       } catch {
         // Not JSON, normal text response
       }
 
-      if (bulkSendData) {
-        // Save a friendly summary as the agent message
+      if (multiActionData) {
+        const summary = `Pronto para executar **${multiActionData.actions.length}** ação(ões):\n\n**${multiActionData.summary}**\n\n**Motivo:** ${multiActionData.reason}\n\nRevise e confirme abaixo.`
+        let agentMsg: ChatMessage
+        try { agentMsg = await api.saveChatMessage({ role: 'agent', content: summary }) }
+        catch { agentMsg = { id: (Date.now() + 1).toString(), userId: '', role: 'agent', content: summary, createdAt: new Date().toISOString() } }
+        setMessages((prev) => [...prev, agentMsg])
+        setPendingMultiAction(multiActionData)
+      } else if (bulkSendData) {
         const summary = `Encontrei **${bulkSendData.recipients.length}** destinatário(s) para o envio.\n\n**Motivo:** ${bulkSendData.reason}\n\nRevise os detalhes abaixo e confirme o envio.`
         let agentMsg: ChatMessage
         try {
@@ -225,6 +256,37 @@ export default function Agent() {
       setPendingBulkSend(null)
       setSendingBulk(false)
     }
+  }
+
+  async function handleConfirmMultiAction() {
+    if (!pendingMultiAction || executingMulti) return
+    setExecutingMulti(true)
+    try {
+      const result = await api.multiAction(pendingMultiAction.actions)
+      const resultContent = `Ações executadas: **${result.succeeded}/${result.total}** com sucesso.\n${result.results.map(r => `• ${ACTION_LABELS[r.type] || r.type}${r.emailId ? ` (${r.emailId.slice(0, 8)}...)` : ''}: ${r.success ? '✓' : '✗ ' + (r.error || 'falhou')}`).join('\n')}`
+      let resultMsg: ChatMessage
+      try { resultMsg = await api.saveChatMessage({ role: 'agent', content: resultContent }) }
+      catch { resultMsg = { id: (Date.now() + 2).toString(), userId: '', role: 'agent', content: resultContent, createdAt: new Date().toISOString() } }
+      setMessages((prev) => [...prev, resultMsg])
+    } catch (error) {
+      const errContent = `Erro ao executar ações: ${error instanceof Error ? error.message : 'Erro desconhecido'}`
+      let errMsg: ChatMessage
+      try { errMsg = await api.saveChatMessage({ role: 'agent', content: errContent }) }
+      catch { errMsg = { id: (Date.now() + 2).toString(), userId: '', role: 'agent', content: errContent, createdAt: new Date().toISOString() } }
+      setMessages((prev) => [...prev, errMsg])
+    } finally {
+      setPendingMultiAction(null)
+      setExecutingMulti(false)
+    }
+  }
+
+  async function handleCancelMultiAction() {
+    const cancelContent = 'Ações canceladas pelo operador.'
+    let cancelMsg: ChatMessage
+    try { cancelMsg = await api.saveChatMessage({ role: 'agent', content: cancelContent }) }
+    catch { cancelMsg = { id: (Date.now() + 2).toString(), userId: '', role: 'agent', content: cancelContent, createdAt: new Date().toISOString() } }
+    setMessages((prev) => [...prev, cancelMsg])
+    setPendingMultiAction(null)
   }
 
   async function handleCancelBulkSend() {
@@ -338,6 +400,49 @@ export default function Agent() {
                 </div>
               </div>
             )}
+            {pendingMultiAction && (
+              <div className="flex justify-start">
+                <div className="max-w-[85%] rounded-xl border border-accent/30 bg-surface-hover overflow-hidden">
+                  <div className="flex items-center gap-2 px-4 py-2.5 bg-accent/10 border-b border-accent/20">
+                    <Brain size={14} className="text-accent" />
+                    <span className="text-accent text-sm font-medium">Confirmar Ações do Agente ({pendingMultiAction.actions.length})</span>
+                  </div>
+                  <div className="p-4 space-y-3">
+                    <p className="text-text-primary text-sm font-medium">{pendingMultiAction.summary}</p>
+                    <div className="space-y-1.5">
+                      {pendingMultiAction.actions.map((a, i) => (
+                        <div key={i} className="flex items-center gap-2 text-xs text-text-secondary bg-background rounded px-2 py-1.5">
+                          <span className={cn(
+                            'w-2 h-2 rounded-full shrink-0',
+                            a.type === 'delete_email' ? 'bg-red-400' :
+                            a.type === 'reply_email' ? 'bg-emerald-400' :
+                            a.type === 'move_email' ? 'bg-blue-400' : 'bg-amber-400'
+                          )} />
+                          <span className="font-medium">{ACTION_LABELS[a.type]}</span>
+                          {a.emailId && <span className="text-text-muted">ID: {a.emailId.slice(0, 8)}...</span>}
+                          {a.folder && <span className="text-text-muted">→ {a.folder}</span>}
+                          {a.recipients && <span className="text-text-muted">{a.recipients.length} dest.</span>}
+                        </div>
+                      ))}
+                    </div>
+                    <p className="text-text-muted text-xs italic">{pendingMultiAction.reason}</p>
+                    <div className="flex gap-2 pt-2 border-t border-border/50">
+                      <button
+                        onClick={handleConfirmMultiAction}
+                        disabled={executingMulti}
+                        className="flex-1 flex items-center justify-center gap-2 px-3 py-2 bg-accent text-background rounded-lg text-sm font-medium hover:bg-accent-hover disabled:opacity-50"
+                      >
+                        {executingMulti ? <><RefreshCw size={14} className="animate-spin" /> Executando...</> : <><Send size={14} /> Executar tudo</>}
+                      </button>
+                      <button onClick={handleCancelMultiAction} disabled={executingMulti} className="px-3 py-2 border border-border rounded-lg text-sm text-text-secondary hover:text-text-primary hover:bg-surface-hover disabled:opacity-50">
+                        <X size={14} />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {pendingBulkSend && (
               <div className="flex justify-start">
                 <div className="max-w-[85%] rounded-xl border border-accent/30 bg-surface-hover overflow-hidden">

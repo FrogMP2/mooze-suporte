@@ -384,7 +384,7 @@ app.post('/api/agent-chat', async (req, res) => {
 
     // Fetch context data from Supabase (direct queries, no RPCs needed)
     const [recentRes, totalRes, unreadRes, criticalRes, pendingRes, knowledgeRes] = await Promise.all([
-      supabase.from('emails').select('subject, from, fromName, category, urgency, risk, status, date, body').order('date', { ascending: false }).limit(30),
+      supabase.from('emails').select('id, subject, from, fromName, category, urgency, risk, status, date, body').order('date', { ascending: false }).limit(30),
       supabase.from('emails').select('id', { count: 'exact', head: true }),
       supabase.from('emails').select('id', { count: 'exact', head: true }).eq('read', false),
       supabase.from('emails').select('id', { count: 'exact', head: true }).eq('urgency', 'critica'),
@@ -430,8 +430,8 @@ ${criticalEmails.map((e) => `- ${e.subject} (de ${e.fromName || e.from}) - ${e.c
 ## Emails com risco (${riskEmails.length}):
 ${riskEmails.map((e) => `- [${e.risk}] ${e.subject} (de ${e.fromName || e.from})`).join('\n') || 'Nenhum.'}
 
-## Últimos 30 emails:
-${recentEmails.map((e) => `- [${e.status}] [${e.category || '?'}] "${e.subject}" de ${e.fromName || e.from} (${e.date}) - ${(e.body || '').slice(0, 150)}`).join('\n') || 'Nenhum email encontrado.'}
+## Últimos 30 emails (use o ID para ações):
+${recentEmails.map((e) => `- ID:${e.id} [${e.status}] [${e.category || '?'}] "${e.subject}" de ${e.fromName || e.from} <${e.from}> (${e.date}) - ${(e.body || '').slice(0, 150)}`).join('\n') || 'Nenhum email encontrado.'}
 `
 
     let userPrompt = message
@@ -465,20 +465,31 @@ ${userPrompt}
 - Responda em português brasileiro
 - Seja conciso mas completo
 
-## AÇÃO ESPECIAL — Disparo de emails:
-Se o operador pedir para ENVIAR ou DISPARAR emails para múltiplos destinatários (ex: "envie email para quem teve swap travado"), você DEVE:
-1. Ler CUIDADOSAMENTE o conteúdo (body) de CADA email nos dados acima
-2. Selecionar APENAS os remetentes cujo email menciona ESPECIFICAMENTE o problema descrito pelo operador
-3. Não incluir emails que apenas mencionam temas vagamente relacionados — o problema deve ser EXATAMENTE o que o operador pediu
-4. Usar o campo "from" como email do destinatário e "fromName" como nome
-5. Retornar SOMENTE um JSON válido, sem texto antes ou depois, sem markdown, neste formato exato:
-{"action":"bulk_send","subject":"Assunto do email","body":"Corpo completo do email, assinado como Equipe Mooze","recipients":[{"email":"email@real.com","name":"Nome Real"}],"reason":"Explicação detalhada de quais emails foram analisados e por que cada destinatário foi incluído"}
-REGRAS CRÍTICAS:
-- NÃO use code fences (```) — retorne o JSON puro
-- Use APENAS emails reais que existem nos dados acima
-- NÃO invente emails ou nomes que não estejam nos dados
-- O corpo deve ser profissional, empático e assinado como "Equipe Mooze"
-- Se não encontrar destinatários que correspondam EXATAMENTE ao problema, responda em texto normal explicando o que encontrou e peça mais detalhes`
+## AÇÕES AUTÔNOMAS DO AGENTE
+
+Você tem autonomia para executar ações reais. Quando o operador pedir ações, retorne SOMENTE JSON puro (sem markdown, sem texto fora do JSON).
+
+### Formato multi_action (combinação de ações):
+{"action":"multi_action","summary":"O que será feito","actions":[...],"reason":"Justificativa"}
+
+### Tipos de ação:
+reply_email: {"type":"reply_email","emailId":"ID","subject":"Assunto","body":"Corpo assinado Equipe Mooze"}
+move_email: {"type":"move_email","emailId":"ID","folder":"Archive"} (pastas: Archive, INBOX, SPAM, TRASH)
+delete_email: {"type":"delete_email","emailId":"ID"}
+bulk_send: {"type":"bulk_send","subject":"Assunto","body":"Corpo","recipients":[{"email":"x@y.com","name":"Nome"}]}
+
+### Exemplo combinado (responder + arquivar):
+{"action":"multi_action","summary":"Responderei 2 emails sobre swap e arquivarei","actions":[{"type":"reply_email","emailId":"abc","subject":"Re: Swap","body":"Olá...\n\nEquipe Mooze"},{"type":"move_email","emailId":"abc","folder":"Archive"}],"reason":"2 emails sobre swap travado encontrados"}
+
+### Disparo simples:
+{"action":"bulk_send","subject":"Assunto","body":"Corpo","recipients":[{"email":"x@y.com","name":"Nome"}],"reason":"Justificativa"}
+
+REGRAS:
+- JSON puro, sem code fences
+- Use APENAS IDs reais dos dados acima
+- NÃO invente IDs, emails ou nomes
+- Para delete, seja conservador e justifique
+- Se não tiver certeza dos IDs, responda em texto pedindo confirmação`
 
     const apiKey = process.env.GEMINI_API_KEY
     if (!apiKey) throw new Error('GEMINI_API_KEY não configurada')
@@ -563,6 +574,130 @@ app.post('/api/bulk-send', async (req, res) => {
   } catch (error) {
     console.error('[BULK] Erro:', error.message)
     res.status(500).json({ message: 'Erro no envio em massa', error: error.message })
+  }
+})
+
+// ─── MOVE EMAIL ──────────────────────────────────────────────
+
+app.post('/api/move-email', async (req, res) => {
+  try {
+    const { emailId, folder } = req.body
+    if (!emailId || !folder) return res.status(400).json({ message: 'emailId e folder obrigatórios' })
+
+    const { error } = await supabase.from('emails').update({ folder }).eq('id', emailId)
+    if (error) throw new Error(error.message)
+
+    console.log(`[MOVE] Email ${emailId} → ${folder}`)
+    res.json({ success: true })
+  } catch (error) {
+    console.error('[MOVE] Erro:', error.message)
+    res.status(500).json({ message: error.message })
+  }
+})
+
+// ─── DELETE EMAIL ─────────────────────────────────────────────
+
+app.post('/api/delete-email', async (req, res) => {
+  try {
+    const { emailId } = req.body
+    if (!emailId) return res.status(400).json({ message: 'emailId obrigatório' })
+
+    const { error } = await supabase.from('emails').update({ folder: 'TRASH', status: 'deletado' }).eq('id', emailId)
+    if (error) throw new Error(error.message)
+
+    console.log(`[DELETE] Email ${emailId} movido para TRASH`)
+    res.json({ success: true })
+  } catch (error) {
+    console.error('[DELETE] Erro:', error.message)
+    res.status(500).json({ message: error.message })
+  }
+})
+
+// ─── AGENT REPLY ──────────────────────────────────────────────
+
+app.post('/api/agent-reply', async (req, res) => {
+  try {
+    const { emailId, subject, body } = req.body
+    if (!emailId || !body) return res.status(400).json({ message: 'emailId e body obrigatórios' })
+
+    const { data: email, error: fetchErr } = await supabase.from('emails').select('*').eq('id', emailId).single()
+    if (fetchErr || !email) return res.status(404).json({ message: 'E-mail não encontrado' })
+
+    await sendEmail({
+      to: email.from,
+      subject: subject || `Re: ${email.subject || ''}`,
+      text: body,
+      inReplyTo: email.messageId,
+      references: email.messageId,
+    })
+
+    const sentUser = process.env.RESEND_FROM || 'suporte@mooze.app'
+    await Promise.all([
+      supabase.from('emails').update({ status: 'respondido', respondedAt: new Date().toISOString(), respondedBy: 'agente' }).eq('id', emailId),
+      supabase.from('emails').insert({
+        messageId: `agent-reply-${emailId}-${Date.now()}`,
+        from: sentUser, fromName: 'Equipe Mooze',
+        to: email.from, subject: subject || `Re: ${email.subject || ''}`,
+        body, date: new Date().toISOString(), folder: 'SENT', read: true, status: 'respondido',
+      }),
+    ])
+
+    console.log(`[AGENT-REPLY] Resposta enviada para ${email.from}`)
+    res.json({ success: true })
+  } catch (error) {
+    console.error('[AGENT-REPLY] Erro:', error.message)
+    res.status(500).json({ message: error.message })
+  }
+})
+
+// ─── MULTI ACTION (executa lista de ações do agente) ──────────
+
+app.post('/api/multi-action', async (req, res) => {
+  try {
+    const { actions } = req.body
+    if (!actions?.length) return res.status(400).json({ message: 'actions obrigatório' })
+
+    const results = []
+
+    for (const action of actions) {
+      try {
+        if (action.type === 'reply_email') {
+          const r = await fetch(`http://localhost:${PORT}/api/agent-reply`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ emailId: action.emailId, subject: action.subject, body: action.body }),
+          })
+          results.push({ type: action.type, emailId: action.emailId, success: r.ok })
+        } else if (action.type === 'move_email') {
+          const r = await fetch(`http://localhost:${PORT}/api/move-email`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ emailId: action.emailId, folder: action.folder }),
+          })
+          results.push({ type: action.type, emailId: action.emailId, success: r.ok })
+        } else if (action.type === 'delete_email') {
+          const r = await fetch(`http://localhost:${PORT}/api/delete-email`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ emailId: action.emailId }),
+          })
+          results.push({ type: action.type, emailId: action.emailId, success: r.ok })
+        } else if (action.type === 'bulk_send') {
+          const r = await fetch(`http://localhost:${PORT}/api/bulk-send`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ recipients: action.recipients, subject: action.subject, body: action.body }),
+          })
+          const data = await r.json()
+          results.push({ type: action.type, success: r.ok, ...data })
+        }
+      } catch (err) {
+        results.push({ type: action.type, emailId: action.emailId, success: false, error: err.message })
+      }
+    }
+
+    const succeeded = results.filter(r => r.success).length
+    console.log(`[MULTI-ACTION] ${succeeded}/${results.length} ações executadas`)
+    res.json({ success: true, results, succeeded, total: results.length })
+  } catch (error) {
+    console.error('[MULTI-ACTION] Erro:', error.message)
+    res.status(500).json({ message: error.message })
   }
 })
 
