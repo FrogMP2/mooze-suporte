@@ -27,7 +27,7 @@ async function sendEmailViaResend({ to, subject, text, headers }) {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      from: `Mooze Suporte <${process.env.RESEND_FROM || 'suporte@mooze.app'}>`,
+      from: process.env.RESEND_FROM || 'Suporte Mooze <suporte@mooze.app>',
       to: [to],
       subject,
       text,
