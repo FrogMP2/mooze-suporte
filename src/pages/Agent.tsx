@@ -115,7 +115,13 @@ export default function Agent() {
       // Check if the response is a bulk_send action (JSON from Gemini)
       let bulkSendData: BulkSendData | null = null
       try {
-        const parsed = JSON.parse(data.response)
+        // Strip markdown code fences if present (```json ... ``` or ``` ... ```)
+        let jsonStr = data.response.trim()
+        const codeBlockMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/)
+        if (codeBlockMatch) {
+          jsonStr = codeBlockMatch[1].trim()
+        }
+        const parsed = JSON.parse(jsonStr)
         if (parsed.action === 'bulk_send' && parsed.recipients?.length) {
           bulkSendData = parsed
         }

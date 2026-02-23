@@ -226,6 +226,50 @@ export const api = {
     return res.json() as Promise<{ success: boolean }>
   },
 
+  // ─── KNOWLEDGE BASE ──────────────────────────────────────
+
+  getKnowledge: async () => {
+    const { data, error } = await supabase
+      .from('knowledge_base')
+      .select('*')
+      .order('updatedAt', { ascending: false })
+
+    if (error) throw new Error(error.message)
+    return (data || []) as { id: string; category: string; title: string; content: string; source: string; createdAt: string; updatedAt: string }[]
+  },
+
+  addKnowledge: async (entry: { category: string; title: string; content: string; source?: string }) => {
+    const { data, error } = await supabase
+      .from('knowledge_base')
+      .insert(entry)
+      .select()
+      .single()
+
+    if (error) throw new Error(error.message)
+    return data
+  },
+
+  updateKnowledge: async (id: string, updates: { category?: string; title?: string; content?: string }) => {
+    const { data, error } = await supabase
+      .from('knowledge_base')
+      .update(updates)
+      .eq('id', id)
+      .select()
+      .single()
+
+    if (error) throw new Error(error.message)
+    return data
+  },
+
+  deleteKnowledge: async (id: string) => {
+    const { error } = await supabase
+      .from('knowledge_base')
+      .delete()
+      .eq('id', id)
+
+    if (error) throw new Error(error.message)
+  },
+
   // ─── SETTINGS ─────────────────────────────────────────────
 
   testImap: async (config: Record<string, unknown>) => {

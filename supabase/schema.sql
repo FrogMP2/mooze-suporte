@@ -272,3 +272,29 @@ BEGIN
   RETURN similar_count;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- ==========================================
+-- Tabela: knowledge_base (Cérebro do Agente IA)
+-- ==========================================
+
+CREATE TABLE knowledge_base (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  category TEXT NOT NULL,
+  title TEXT NOT NULL,
+  content TEXT NOT NULL,
+  source TEXT DEFAULT 'manual',
+  "createdAt" TIMESTAMPTZ DEFAULT now(),
+  "updatedAt" TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX idx_knowledge_base_category ON knowledge_base(category);
+
+ALTER TABLE knowledge_base ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "auth_knowledge_base" ON knowledge_base
+  FOR ALL TO authenticated
+  USING (true) WITH CHECK (true);
+
+CREATE TRIGGER knowledge_base_updated_at
+  BEFORE UPDATE ON knowledge_base
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at();

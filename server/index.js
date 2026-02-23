@@ -383,12 +383,13 @@ app.post('/api/agent-chat', async (req, res) => {
     const { message, action } = req.body
 
     // Fetch context data from Supabase (direct queries, no RPCs needed)
-    const [recentRes, totalRes, unreadRes, criticalRes, pendingRes] = await Promise.all([
+    const [recentRes, totalRes, unreadRes, criticalRes, pendingRes, knowledgeRes] = await Promise.all([
       supabase.from('emails').select('subject, from, fromName, category, urgency, risk, status, date, body').order('date', { ascending: false }).limit(30),
       supabase.from('emails').select('id', { count: 'exact', head: true }),
       supabase.from('emails').select('id', { count: 'exact', head: true }).eq('read', false),
       supabase.from('emails').select('id', { count: 'exact', head: true }).eq('urgency', 'critica'),
       supabase.from('emails').select('id', { count: 'exact', head: true }).in('status', ['novo', 'em_analise']),
+      supabase.from('knowledge_base').select('category, title, content').order('updatedAt', { ascending: false }).limit(50),
     ])
 
     const recentEmails = recentRes.data || []
@@ -396,6 +397,7 @@ app.post('/api/agent-chat', async (req, res) => {
     const unread = unreadRes.count || 0
     const critical = criticalRes.count || 0
     const pendingResponse = pendingRes.count || 0
+    const knowledgeEntries = knowledgeRes.data || []
 
     // Get today's emails
     const today = new Date().toISOString().split('T')[0]
@@ -406,6 +408,11 @@ app.post('/api/agent-chat', async (req, res) => {
 
     // Get unresolved critical
     const criticalEmails = recentEmails.filter((e) => e.urgency === 'critica' && e.status !== 'respondido' && e.status !== 'resolvido')
+
+    // Build knowledge base context
+    const knowledgeContext = knowledgeEntries.length > 0
+      ? `\n## Base de Conhecimento (Memória do Agente):\n${knowledgeEntries.map((k) => `### [${k.category}] ${k.title}\n${k.content}`).join('\n\n')}\n`
+      : ''
 
     const contextData = `
 ## Dashboard Stats:
@@ -442,8 +449,8 @@ ${recentEmails.map((e) => `- [${e.status}] [${e.category || '?'}] "${e.subject}"
 
     const prompt = `Você é o Agente de Inteligência de Suporte da Mooze, uma carteira de autocustódia para Bitcoin e Liquid Network.
 
-Você tem acesso a dados reais do sistema de suporte. Use-os para responder de forma precisa e útil.
-
+Você tem acesso a dados reais do sistema de suporte e a uma base de conhecimento com informações da empresa. Use SEMPRE esses dados para responder de forma precisa e útil.
+${knowledgeContext}
 ${contextData}
 
 ## Solicitação do operador:
@@ -460,13 +467,18 @@ ${userPrompt}
 
 ## AÇÃO ESPECIAL — Disparo de emails:
 Se o operador pedir para ENVIAR ou DISPARAR emails para múltiplos destinatários (ex: "envie email para quem teve swap travado"), você DEVE:
-1. Analisar os dados reais dos emails acima para selecionar os destinatários corretos
-2. Retornar SOMENTE um JSON válido (sem texto antes ou depois) neste formato:
-{"action":"bulk_send","subject":"Assunto do email","body":"Corpo completo do email, assinado como Equipe Mooze","recipients":[{"email":"email@real.com","name":"Nome Real"}],"reason":"Explicação de por que esses destinatários foram selecionados"}
-- Use APENAS emails reais que existem nos dados acima (campo "from" dos emails)
-- NÃO invente emails ou nomes
-- O corpo deve ser profissional, assinado como "Equipe Mooze"
-- Se não encontrar destinatários relevantes, responda normalmente explicando o motivo`
+1. Ler CUIDADOSAMENTE o conteúdo (body) de CADA email nos dados acima
+2. Selecionar APENAS os remetentes cujo email menciona ESPECIFICAMENTE o problema descrito pelo operador
+3. Não incluir emails que apenas mencionam temas vagamente relacionados — o problema deve ser EXATAMENTE o que o operador pediu
+4. Usar o campo "from" como email do destinatário e "fromName" como nome
+5. Retornar SOMENTE um JSON válido, sem texto antes ou depois, sem markdown, neste formato exato:
+{"action":"bulk_send","subject":"Assunto do email","body":"Corpo completo do email, assinado como Equipe Mooze","recipients":[{"email":"email@real.com","name":"Nome Real"}],"reason":"Explicação detalhada de quais emails foram analisados e por que cada destinatário foi incluído"}
+REGRAS CRÍTICAS:
+- NÃO use code fences (```) — retorne o JSON puro
+- Use APENAS emails reais que existem nos dados acima
+- NÃO invente emails ou nomes que não estejam nos dados
+- O corpo deve ser profissional, empático e assinado como "Equipe Mooze"
+- Se não encontrar destinatários que correspondam EXATAMENTE ao problema, responda em texto normal explicando o que encontrou e peça mais detalhes`
 
     const apiKey = process.env.GEMINI_API_KEY
     if (!apiKey) throw new Error('GEMINI_API_KEY não configurada')
