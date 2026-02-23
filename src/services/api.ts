@@ -196,6 +196,21 @@ export const api = {
     return res.json() as Promise<{ success: boolean }>
   },
 
+  // ─── BULK SEND ──────────────────────────────────────────────
+
+  bulkSend: async (params: { recipients: { email: string; name: string }[]; subject: string; body: string }) => {
+    const res = await fetch(`${SYNC_SERVER_URL}/api/bulk-send`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ message: res.statusText }))
+      throw new Error(err.message || 'Erro no envio em massa')
+    }
+    return res.json() as Promise<{ sent: number; failed: number; errors: { email: string; error: string }[] }>
+  },
+
   // ─── RESPOND ──────────────────────────────────────────────
 
   sendResponse: async (emailId: string, content: string) => {

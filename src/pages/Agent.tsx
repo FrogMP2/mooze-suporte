@@ -11,6 +11,9 @@ import {
   History,
   Check,
   Trash2,
+  Mail,
+  Users,
+  X,
 } from 'lucide-react'
 import { Card, CardHeader, CardBody } from '@/components/ui/Card'
 import { cn } from '@/lib/utils'
@@ -18,6 +21,14 @@ import { api } from '@/services/api'
 import type { ChatMessage } from '@/types'
 
 const SYNC_SERVER_URL = import.meta.env.VITE_SYNC_SERVER_URL || 'http://localhost:3001'
+
+interface BulkSendData {
+  action: 'bulk_send'
+  subject: string
+  body: string
+  recipients: { email: string; name: string }[]
+  reason: string
+}
 
 const WELCOME_MESSAGE: ChatMessage = {
   id: 'welcome',
@@ -50,6 +61,8 @@ export default function Agent() {
   const [processing, setProcessing] = useState(false)
   const [loadingHistory, setLoadingHistory] = useState(true)
   const [copiedId, setCopiedId] = useState<string | null>(null)
+  const [pendingBulkSend, setPendingBulkSend] = useState<BulkSendData | null>(null)
+  const [sendingBulk, setSendingBulk] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -99,14 +112,38 @@ export default function Agent() {
 
       const data = await res.json()
 
-      // Save agent response to DB
-      let agentMsg: ChatMessage
+      // Check if the response is a bulk_send action (JSON from Gemini)
+      let bulkSendData: BulkSendData | null = null
       try {
-        agentMsg = await api.saveChatMessage({ role: 'agent', content: data.response })
+        const parsed = JSON.parse(data.response)
+        if (parsed.action === 'bulk_send' && parsed.recipients?.length) {
+          bulkSendData = parsed
+        }
       } catch {
-        agentMsg = { id: (Date.now() + 1).toString(), userId: '', role: 'agent', content: data.response, createdAt: new Date().toISOString() }
+        // Not JSON, normal text response
       }
-      setMessages((prev) => [...prev, agentMsg])
+
+      if (bulkSendData) {
+        // Save a friendly summary as the agent message
+        const summary = `Encontrei **${bulkSendData.recipients.length}** destinatário(s) para o envio.\n\n**Motivo:** ${bulkSendData.reason}\n\nRevise os detalhes abaixo e confirme o envio.`
+        let agentMsg: ChatMessage
+        try {
+          agentMsg = await api.saveChatMessage({ role: 'agent', content: summary })
+        } catch {
+          agentMsg = { id: (Date.now() + 1).toString(), userId: '', role: 'agent', content: summary, createdAt: new Date().toISOString() }
+        }
+        setMessages((prev) => [...prev, agentMsg])
+        setPendingBulkSend(bulkSendData)
+      } else {
+        // Save agent response to DB
+        let agentMsg: ChatMessage
+        try {
+          agentMsg = await api.saveChatMessage({ role: 'agent', content: data.response })
+        } catch {
+          agentMsg = { id: (Date.now() + 1).toString(), userId: '', role: 'agent', content: data.response, createdAt: new Date().toISOString() }
+        }
+        setMessages((prev) => [...prev, agentMsg])
+      }
     } catch (error) {
       const errorContent = `Erro ao processar: ${error instanceof Error ? error.message : 'Erro desconhecido'}. Verifique se o sync worker está rodando.`
       let errMsg: ChatMessage
@@ -145,6 +182,55 @@ export default function Agent() {
     } catch {
       // ignore
     }
+  }
+
+  async function handleConfirmBulkSend() {
+    if (!pendingBulkSend || sendingBulk) return
+    setSendingBulk(true)
+
+    try {
+      const result = await api.bulkSend({
+        recipients: pendingBulkSend.recipients,
+        subject: pendingBulkSend.subject,
+        body: pendingBulkSend.body,
+      })
+
+      const resultContent = result.failed === 0
+        ? `Envio concluído! **${result.sent}** email(s) enviado(s) com sucesso.`
+        : `Envio concluído: **${result.sent}** enviado(s), **${result.failed}** falha(s).\n${result.errors.map((e) => `• ${e.email}: ${e.error}`).join('\n')}`
+
+      let resultMsg: ChatMessage
+      try {
+        resultMsg = await api.saveChatMessage({ role: 'agent', content: resultContent })
+      } catch {
+        resultMsg = { id: (Date.now() + 2).toString(), userId: '', role: 'agent', content: resultContent, createdAt: new Date().toISOString() }
+      }
+      setMessages((prev) => [...prev, resultMsg])
+    } catch (error) {
+      const errorContent = `Erro no envio em massa: ${error instanceof Error ? error.message : 'Erro desconhecido'}`
+      let errMsg: ChatMessage
+      try {
+        errMsg = await api.saveChatMessage({ role: 'agent', content: errorContent })
+      } catch {
+        errMsg = { id: (Date.now() + 2).toString(), userId: '', role: 'agent', content: errorContent, createdAt: new Date().toISOString() }
+      }
+      setMessages((prev) => [...prev, errMsg])
+    } finally {
+      setPendingBulkSend(null)
+      setSendingBulk(false)
+    }
+  }
+
+  async function handleCancelBulkSend() {
+    const cancelContent = 'Envio cancelado pelo operador.'
+    let cancelMsg: ChatMessage
+    try {
+      cancelMsg = await api.saveChatMessage({ role: 'agent', content: cancelContent })
+    } catch {
+      cancelMsg = { id: (Date.now() + 2).toString(), userId: '', role: 'agent', content: cancelContent, createdAt: new Date().toISOString() }
+    }
+    setMessages((prev) => [...prev, cancelMsg])
+    setPendingBulkSend(null)
   }
 
   function handleCopy(id: string, content: string) {
@@ -242,6 +328,63 @@ export default function Agent() {
                   <div className="flex items-center gap-2">
                     <RefreshCw size={14} className="text-accent animate-spin" />
                     <span className="text-text-secondary text-sm">Analisando dados e gerando resposta...</span>
+                  </div>
+                </div>
+              </div>
+            )}
+            {pendingBulkSend && (
+              <div className="flex justify-start">
+                <div className="max-w-[85%] rounded-xl border border-accent/30 bg-surface-hover overflow-hidden">
+                  <div className="flex items-center gap-2 px-4 py-2.5 bg-accent/10 border-b border-accent/20">
+                    <Mail size={14} className="text-accent" />
+                    <span className="text-accent text-sm font-medium">Confirmar Envio em Massa</span>
+                  </div>
+                  <div className="p-4 space-y-3">
+                    <div>
+                      <div className="flex items-center gap-1.5 mb-1.5">
+                        <Users size={13} className="text-text-muted" />
+                        <span className="text-text-secondary text-xs font-medium">
+                          Destinatários ({pendingBulkSend.recipients.length})
+                        </span>
+                      </div>
+                      <div className="space-y-1">
+                        {pendingBulkSend.recipients.map((r, i) => (
+                          <div key={i} className="text-xs text-text-primary bg-background rounded px-2 py-1">
+                            {r.name ? `${r.name} — ${r.email}` : r.email}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                    <div>
+                      <span className="text-text-secondary text-xs font-medium">Assunto</span>
+                      <p className="text-sm text-text-primary mt-0.5">{pendingBulkSend.subject}</p>
+                    </div>
+                    <div>
+                      <span className="text-text-secondary text-xs font-medium">Corpo do Email</span>
+                      <pre className="text-xs text-text-primary mt-0.5 whitespace-pre-wrap bg-background rounded p-2 max-h-40 overflow-y-auto">
+                        {pendingBulkSend.body}
+                      </pre>
+                    </div>
+                    <div className="flex gap-2 pt-2 border-t border-border/50">
+                      <button
+                        onClick={handleConfirmBulkSend}
+                        disabled={sendingBulk}
+                        className="flex-1 flex items-center justify-center gap-2 px-3 py-2 bg-accent text-background rounded-lg text-sm font-medium hover:bg-accent-hover disabled:opacity-50"
+                      >
+                        {sendingBulk ? (
+                          <><RefreshCw size={14} className="animate-spin" /> Enviando...</>
+                        ) : (
+                          <><Send size={14} /> Confirmar Envio</>
+                        )}
+                      </button>
+                      <button
+                        onClick={handleCancelBulkSend}
+                        disabled={sendingBulk}
+                        className="px-3 py-2 border border-border rounded-lg text-sm text-text-secondary hover:text-text-primary hover:bg-surface-hover disabled:opacity-50"
+                      >
+                        <X size={14} />
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>

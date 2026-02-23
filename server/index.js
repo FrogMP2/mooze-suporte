@@ -456,7 +456,17 @@ ${userPrompt}
 - Se identificar situações críticas, destaque-as
 - Dê recomendações concretas e priorizadas
 - Responda em português brasileiro
-- Seja conciso mas completo`
+- Seja conciso mas completo
+
+## AÇÃO ESPECIAL — Disparo de emails:
+Se o operador pedir para ENVIAR ou DISPARAR emails para múltiplos destinatários (ex: "envie email para quem teve swap travado"), você DEVE:
+1. Analisar os dados reais dos emails acima para selecionar os destinatários corretos
+2. Retornar SOMENTE um JSON válido (sem texto antes ou depois) neste formato:
+{"action":"bulk_send","subject":"Assunto do email","body":"Corpo completo do email, assinado como Equipe Mooze","recipients":[{"email":"email@real.com","name":"Nome Real"}],"reason":"Explicação de por que esses destinatários foram selecionados"}
+- Use APENAS emails reais que existem nos dados acima (campo "from" dos emails)
+- NÃO invente emails ou nomes
+- O corpo deve ser profissional, assinado como "Equipe Mooze"
+- Se não encontrar destinatários relevantes, responda normalmente explicando o motivo`
 
     const apiKey = process.env.GEMINI_API_KEY
     if (!apiKey) throw new Error('GEMINI_API_KEY não configurada')
@@ -482,6 +492,65 @@ ${userPrompt}
   } catch (error) {
     console.error('[AGENT] Erro:', error.message)
     res.status(500).json({ message: error.message })
+  }
+})
+
+// ─── BULK SEND ──────────────────────────────────────────────
+
+app.post('/api/bulk-send', async (req, res) => {
+  try {
+    const { recipients, subject, body } = req.body
+
+    if (!recipients?.length || !subject || !body) {
+      return res.status(400).json({ message: 'Campos obrigatórios: recipients, subject, body' })
+    }
+
+    if (recipients.length > 20) {
+      return res.status(400).json({ message: 'Máximo de 20 destinatários por envio' })
+    }
+
+    let sent = 0
+    let failed = 0
+    const errors = []
+
+    for (const recipient of recipients) {
+      try {
+        await sendEmail({ to: recipient.email, subject, text: body })
+
+        // Save sent email to DB
+        const sentUser = process.env.RESEND_FROM || 'suporte@mooze.app'
+        await supabase.from('emails').insert({
+          messageId: `sent-bulk-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          from: sentUser,
+          fromName: 'Equipe Mooze',
+          to: recipient.email,
+          subject,
+          body,
+          date: new Date().toISOString(),
+          folder: 'SENT',
+          read: true,
+          status: 'respondido',
+        })
+
+        sent++
+        console.log(`[BULK] Email enviado para ${recipient.email}`)
+      } catch (err) {
+        failed++
+        errors.push({ email: recipient.email, error: err.message })
+        console.error(`[BULK] Falha ao enviar para ${recipient.email}:`, err.message)
+      }
+
+      // Delay 1s between sends to avoid rate limits
+      if (recipients.indexOf(recipient) < recipients.length - 1) {
+        await new Promise((resolve) => setTimeout(resolve, 1000))
+      }
+    }
+
+    console.log(`[BULK] Concluído: ${sent} enviados, ${failed} falharam`)
+    res.json({ sent, failed, errors })
+  } catch (error) {
+    console.error('[BULK] Erro:', error.message)
+    res.status(500).json({ message: 'Erro no envio em massa', error: error.message })
   }
 })
 
