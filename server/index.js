@@ -90,7 +90,7 @@ app.post('/api/send-reply', async (req, res) => {
 
 // ─── AI ANALYSIS (Gemini) ────────────────────────────────────
 
-const GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent'
+const GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent'
 
 async function callGemini(prompt) {
   const apiKey = process.env.GEMINI_API_KEY
