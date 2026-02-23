@@ -17,15 +17,17 @@ app.use(express.json())
 // ─── SMTP TRANSPORT ──────────────────────────────────────────
 
 function getSmtpTransport() {
+  const port = parseInt(process.env.SMTP_PORT || '587')
   return nodemailer.createTransport({
     host: process.env.SMTP_HOST || process.env.IMAP_HOST,
-    port: parseInt(process.env.SMTP_PORT || '465'),
-    secure: true,
+    port,
+    secure: port === 465,
     auth: {
       user: process.env.SMTP_USER || process.env.IMAP_USER,
       pass: process.env.SMTP_PASS || process.env.IMAP_PASS,
     },
     tls: { rejectUnauthorized: false },
+    connectionTimeout: 10000,
   })
 }
 
