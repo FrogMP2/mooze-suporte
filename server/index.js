@@ -62,7 +62,7 @@ app.post('/api/send-reply', async (req, res) => {
     const transport = getSmtpTransport()
     await transport.sendMail({
       from: process.env.SMTP_USER || process.env.IMAP_USER,
-      to: email.sender,
+      to: email.from,
       subject: `Re: ${email.subject || ''}`,
       text: content,
       inReplyTo: email.messageId,
@@ -80,7 +80,7 @@ app.post('/api/send-reply', async (req, res) => {
       })
       .eq('id', emailId)
 
-    console.log(`[SMTP] Resposta enviada para ${email.sender}`)
+    console.log(`[SMTP] Resposta enviada para ${email.from}`)
     res.json({ success: true })
   } catch (error) {
     console.error('[SMTP] Erro ao enviar:', error.message)
@@ -138,14 +138,14 @@ app.post('/api/analyze', async (req, res) => {
     // 2. Get past emails that HAVE responses (learning context)
     const { data: pastEmails } = await supabase
       .from('responses')
-      .select('emailId, content, emails!inner(subject, body, category, sender)')
+      .select('emailId, content, emails!inner(subject, body, category, from, fromName)')
       .order('createdAt', { ascending: false })
       .limit(30)
 
     // 3. Get emails in the same category for recurrence check
     const { data: similarEmails } = await supabase
       .from('emails')
-      .select('id, subject, sender, date')
+      .select('id, subject, from, fromName, date')
       .neq('id', emailId)
       .order('date', { ascending: false })
       .limit(50)
@@ -172,7 +172,7 @@ Sua tarefa é analisar o e-mail de suporte abaixo e gerar uma resposta inteligen
 - A seed phrase é a ÚNICA forma de recuperar a carteira
 
 ## E-mail para analisar:
-De: ${email.senderName || email.sender}
+De: ${email.fromName || email.from}
 Assunto: ${email.subject || 'Sem assunto'}
 Corpo:
 ${(email.body || '').slice(0, 2000)}
@@ -181,7 +181,7 @@ ${(email.body || '').slice(0, 2000)}
 ${pastExamples || 'Nenhum histórico disponível ainda.'}
 
 ## Emails recentes (para detectar padrões recorrentes):
-${(similarEmails || []).slice(0, 20).map((e) => `- ${e.subject} (de ${e.sender}, ${e.date})`).join('\n') || 'Nenhum.'}
+${(similarEmails || []).slice(0, 20).map((e) => `- ${e.subject} (de ${e.fromName || e.from}, ${e.date})`).join('\n') || 'Nenhum.'}
 
 ## Instruções:
 1. Classifique o email em UMA das categorias: problema_tecnico, duvida_educacional, erro_transacao, confusao_taxas, problema_sincronizacao, questao_liquid, suspeita_bug, reclamacao, sugestao_melhoria, seguranca, perda_acesso, outro
@@ -281,16 +281,20 @@ app.post('/api/agent-chat', async (req, res) => {
   try {
     const { message, action } = req.body
 
-    // Fetch context data from Supabase
-    const [statsRes, recentRes, patternsRes] = await Promise.all([
-      supabase.rpc('get_dashboard_stats'),
-      supabase.from('emails').select('subject, sender, senderName, category, urgency, risk, status, date').order('date', { ascending: false }).limit(30),
-      supabase.rpc('get_patterns'),
+    // Fetch context data from Supabase (direct queries, no RPCs needed)
+    const [recentRes, totalRes, unreadRes, criticalRes, pendingRes] = await Promise.all([
+      supabase.from('emails').select('subject, from, fromName, category, urgency, risk, status, date, body').order('date', { ascending: false }).limit(30),
+      supabase.from('emails').select('id', { count: 'exact', head: true }),
+      supabase.from('emails').select('id', { count: 'exact', head: true }).eq('read', false),
+      supabase.from('emails').select('id', { count: 'exact', head: true }).eq('urgency', 'critica'),
+      supabase.from('emails').select('id', { count: 'exact', head: true }).in('status', ['novo', 'em_analise']),
     ])
 
-    const stats = statsRes.data || {}
     const recentEmails = recentRes.data || []
-    const patterns = patternsRes.data || []
+    const totalEmails = totalRes.count || 0
+    const unread = unreadRes.count || 0
+    const critical = criticalRes.count || 0
+    const pendingResponse = pendingRes.count || 0
 
     // Get today's emails
     const today = new Date().toISOString().split('T')[0]
@@ -304,29 +308,22 @@ app.post('/api/agent-chat', async (req, res) => {
 
     const contextData = `
 ## Dashboard Stats:
-- Total de emails: ${stats.totalEmails || 0}
-- Não lidos: ${stats.unread || 0}
-- Críticos: ${stats.critical || 0}
-- Pendentes resposta: ${stats.pendingResponse || 0}
-- Resolvidos hoje: ${stats.resolvedToday || 0}
-- Tempo médio resposta: ${stats.avgResponseTime || 'N/A'}
-- Alertas de risco: ${stats.riskAlerts || 0}
-- Problemas recorrentes: ${stats.recurrentIssues || 0}
+- Total de emails: ${totalEmails}
+- Não lidos: ${unread}
+- Críticos: ${critical}
+- Pendentes resposta: ${pendingResponse}
 
 ## Emails de hoje (${todayEmails.length}):
-${todayEmails.map((e) => `- [${e.urgency || '?'}] ${e.subject} (de ${e.senderName || e.sender}) - Status: ${e.status}`).join('\n') || 'Nenhum email hoje.'}
+${todayEmails.map((e) => `- [${e.urgency || '?'}] ${e.subject} (de ${e.fromName || e.from}) - Status: ${e.status}`).join('\n') || 'Nenhum email hoje.'}
 
 ## Emails críticos não resolvidos (${criticalEmails.length}):
-${criticalEmails.map((e) => `- ${e.subject} (de ${e.senderName || e.sender}) - ${e.category || 'não classificado'}`).join('\n') || 'Nenhum.'}
+${criticalEmails.map((e) => `- ${e.subject} (de ${e.fromName || e.from}) - ${e.category || 'não classificado'}`).join('\n') || 'Nenhum.'}
 
 ## Emails com risco (${riskEmails.length}):
-${riskEmails.map((e) => `- [${e.risk}] ${e.subject} (de ${e.senderName || e.sender})`).join('\n') || 'Nenhum.'}
-
-## Padrões detectados:
-${patterns.map((p) => `- ${p.description || p.pattern} (${p.count}x, ${p.severity})`).join('\n') || 'Nenhum padrão detectado.'}
+${riskEmails.map((e) => `- [${e.risk}] ${e.subject} (de ${e.fromName || e.from})`).join('\n') || 'Nenhum.'}
 
 ## Últimos 30 emails:
-${recentEmails.map((e) => `- [${e.status}] [${e.category || '?'}] ${e.subject} de ${e.senderName || e.sender} (${e.date})`).join('\n')}
+${recentEmails.map((e) => `- [${e.status}] [${e.category || '?'}] "${e.subject}" de ${e.fromName || e.from} (${e.date}) - ${(e.body || '').slice(0, 150)}`).join('\n') || 'Nenhum email encontrado.'}
 `
 
     let userPrompt = message
@@ -360,11 +357,9 @@ ${userPrompt}
 - Responda em português brasileiro
 - Seja conciso mas completo`
 
-    const result = await callGemini(prompt.replace('"responseMimeType": "application/json"', ''))
-
-    // callGemini expects JSON but agent-chat returns free text
-    // Let's call Gemini directly for text response
     const apiKey = process.env.GEMINI_API_KEY
+    if (!apiKey) throw new Error('GEMINI_API_KEY não configurada')
+
     const geminiRes = await fetch(`${GEMINI_URL}?key=${apiKey}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -373,6 +368,11 @@ ${userPrompt}
         generationConfig: { temperature: 0.4, maxOutputTokens: 4096 },
       }),
     })
+
+    if (!geminiRes.ok) {
+      const err = await geminiRes.json().catch(() => ({}))
+      throw new Error(`Gemini API error: ${err.error?.message || geminiRes.statusText}`)
+    }
 
     const geminiData = await geminiRes.json()
     const responseText = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || 'Não foi possível gerar resposta.'
