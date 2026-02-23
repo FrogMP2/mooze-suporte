@@ -138,6 +138,15 @@ export const URGENCY_COLORS: Record<UrgencyLevel, string> = {
   critica: 'text-critical bg-critical-dim',
 }
 
+export interface ChatMessage {
+  id: string
+  userId: string
+  role: 'user' | 'agent'
+  content: string
+  action?: string
+  createdAt: string
+}
+
 export const CATEGORY_ICONS: Record<EmailCategory, string> = {
   problema_tecnico: 'Wrench',
   duvida_educacional: 'GraduationCap',

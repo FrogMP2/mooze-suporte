@@ -10,17 +10,29 @@ import {
   Copy,
   History,
   Check,
+  Trash2,
 } from 'lucide-react'
 import { Card, CardHeader, CardBody } from '@/components/ui/Card'
 import { cn } from '@/lib/utils'
+import { api } from '@/services/api'
+import type { ChatMessage } from '@/types'
 
 const SYNC_SERVER_URL = import.meta.env.VITE_SYNC_SERVER_URL || 'http://localhost:3001'
 
-interface AgentMessage {
-  id: string
-  role: 'user' | 'agent'
-  content: string
-  timestamp: Date
+const WELCOME_MESSAGE: ChatMessage = {
+  id: 'welcome',
+  userId: '',
+  role: 'agent',
+  content: `Olá! Sou o Agente de Inteligência de Suporte da Mooze, alimentado por IA.
+
+Posso ajudar com:
+• **Análise inteligente de e-mails** — Classifico e sugiro respostas personalizadas
+• **Detecção de padrões** — Identifico problemas recorrentes nos dados reais
+• **Relatórios e insights** — Gero análises de risco, resumos e FAQs
+• **Chat livre** — Pergunte qualquer coisa sobre os dados de suporte
+
+Use as **Ações Rápidas** ao lado ou digite sua pergunta abaixo.`,
+  createdAt: new Date().toISOString(),
 }
 
 const QUICK_ACTIONS = [
@@ -33,26 +45,26 @@ const QUICK_ACTIONS = [
 ]
 
 export default function Agent() {
-  const [messages, setMessages] = useState<AgentMessage[]>([
-    {
-      id: '1',
-      role: 'agent',
-      content: `Olá! Sou o Agente de Inteligência de Suporte da Mooze, alimentado por IA.
-
-Posso ajudar com:
-• **Análise inteligente de e-mails** — Classifico e sugiro respostas personalizadas
-• **Detecção de padrões** — Identifico problemas recorrentes nos dados reais
-• **Relatórios e insights** — Gero análises de risco, resumos e FAQs
-• **Chat livre** — Pergunte qualquer coisa sobre os dados de suporte
-
-Use as **Ações Rápidas** ao lado ou digite sua pergunta abaixo.`,
-      timestamp: new Date(),
-    },
-  ])
+  const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
   const [processing, setProcessing] = useState(false)
+  const [loadingHistory, setLoadingHistory] = useState(true)
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    async function loadHistory() {
+      try {
+        const history = await api.fetchChatMessages(50)
+        setMessages(history)
+      } catch {
+        // Table may not exist yet, ignore
+      } finally {
+        setLoadingHistory(false)
+      }
+    }
+    loadHistory()
+  }, [])
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -60,18 +72,20 @@ Use as **Ações Rápidas** ao lado ou digite sua pergunta abaixo.`,
 
   async function sendToAgent(message: string, action?: string) {
     if (processing) return
-
-    const userMsg: AgentMessage = {
-      id: Date.now().toString(),
-      role: 'user',
-      content: message,
-      timestamp: new Date(),
-    }
-    setMessages((prev) => [...prev, userMsg])
     setInput('')
     setProcessing(true)
 
     try {
+      // Save user message to DB
+      let userMsg: ChatMessage
+      try {
+        userMsg = await api.saveChatMessage({ role: 'user', content: message, action })
+      } catch {
+        userMsg = { id: Date.now().toString(), userId: '', role: 'user', content: message, createdAt: new Date().toISOString() }
+      }
+      setMessages((prev) => [...prev, userMsg])
+
+      // Call agent API
       const res = await fetch(`${SYNC_SERVER_URL}/api/agent-chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -85,19 +99,21 @@ Use as **Ações Rápidas** ao lado ou digite sua pergunta abaixo.`,
 
       const data = await res.json()
 
-      const agentMsg: AgentMessage = {
-        id: (Date.now() + 1).toString(),
-        role: 'agent',
-        content: data.response,
-        timestamp: new Date(),
+      // Save agent response to DB
+      let agentMsg: ChatMessage
+      try {
+        agentMsg = await api.saveChatMessage({ role: 'agent', content: data.response })
+      } catch {
+        agentMsg = { id: (Date.now() + 1).toString(), userId: '', role: 'agent', content: data.response, createdAt: new Date().toISOString() }
       }
       setMessages((prev) => [...prev, agentMsg])
     } catch (error) {
-      const errMsg: AgentMessage = {
-        id: (Date.now() + 1).toString(),
-        role: 'agent',
-        content: `Erro ao processar: ${error instanceof Error ? error.message : 'Erro desconhecido'}. Verifique se o sync worker está rodando.`,
-        timestamp: new Date(),
+      const errorContent = `Erro ao processar: ${error instanceof Error ? error.message : 'Erro desconhecido'}. Verifique se o sync worker está rodando.`
+      let errMsg: ChatMessage
+      try {
+        errMsg = await api.saveChatMessage({ role: 'agent', content: errorContent })
+      } catch {
+        errMsg = { id: (Date.now() + 1).toString(), userId: '', role: 'agent', content: errorContent, createdAt: new Date().toISOString() }
       }
       setMessages((prev) => [...prev, errMsg])
     } finally {
@@ -122,6 +138,15 @@ Use as **Ações Rápidas** ao lado ou digite sua pergunta abaixo.`,
     sendToAgent(actionLabels[action] || action, action)
   }
 
+  async function handleClearHistory() {
+    try {
+      await api.clearChatHistory()
+      setMessages([])
+    } catch {
+      // ignore
+    }
+  }
+
   function handleCopy(id: string, content: string) {
     navigator.clipboard.writeText(content)
     setCopiedId(id)
@@ -130,7 +155,6 @@ Use as **Ações Rápidas** ao lado ou digite sua pergunta abaixo.`,
 
   function renderContent(content: string) {
     return content.split('\n').map((line, i) => {
-      // Bold
       const parts = line.split(/(\*\*.*?\*\*)/g).map((part, j) =>
         part.startsWith('**') && part.endsWith('**') ? (
           <strong key={j}>{part.slice(2, -2)}</strong>
@@ -147,6 +171,8 @@ Use as **Ações Rápidas** ao lado ou digite sua pergunta abaixo.`,
     })
   }
 
+  const displayMessages = messages.length === 0 && !loadingHistory ? [WELCOME_MESSAGE] : messages
+
   return (
     <div className="flex gap-6 h-[calc(100vh-48px)]">
       {/* Chat Area */}
@@ -161,49 +187,55 @@ Use as **Ações Rápidas** ao lado ou digite sua pergunta abaixo.`,
         {/* Messages */}
         <Card className="flex-1 flex flex-col overflow-hidden">
           <div className="flex-1 overflow-y-auto p-5 space-y-4">
-            {messages.map((msg) => (
-              <div
-                key={msg.id}
-                className={cn(
-                  'flex',
-                  msg.role === 'user' ? 'justify-end' : 'justify-start'
-                )}
-              >
+            {loadingHistory ? (
+              <div className="flex justify-center py-8">
+                <RefreshCw size={18} className="text-accent animate-spin" />
+              </div>
+            ) : (
+              displayMessages.map((msg) => (
                 <div
+                  key={msg.id}
                   className={cn(
-                    'max-w-[80%] rounded-xl px-4 py-3',
-                    msg.role === 'user'
-                      ? 'bg-accent text-background'
-                      : 'bg-surface-hover text-text-primary'
+                    'flex',
+                    msg.role === 'user' ? 'justify-end' : 'justify-start'
                   )}
                 >
-                  {msg.role === 'agent' && (
-                    <div className="flex items-center gap-2 mb-2">
-                      <Brain size={14} className="text-accent" />
-                      <span className="text-accent text-xs font-medium">Agente Mooze</span>
+                  <div
+                    className={cn(
+                      'max-w-[80%] rounded-xl px-4 py-3',
+                      msg.role === 'user'
+                        ? 'bg-accent text-background'
+                        : 'bg-surface-hover text-text-primary'
+                    )}
+                  >
+                    {msg.role === 'agent' && (
+                      <div className="flex items-center gap-2 mb-2">
+                        <Brain size={14} className="text-accent" />
+                        <span className="text-accent text-xs font-medium">Agente Mooze</span>
+                      </div>
+                    )}
+                    <div className="text-sm leading-relaxed whitespace-pre-wrap">
+                      {renderContent(msg.content)}
                     </div>
-                  )}
-                  <div className="text-sm leading-relaxed whitespace-pre-wrap">
-                    {renderContent(msg.content)}
+                    {msg.role === 'agent' && msg.id !== 'welcome' && (
+                      <div className="flex items-center gap-2 mt-3 pt-2 border-t border-border/50">
+                        <button
+                          onClick={() => handleCopy(msg.id, msg.content)}
+                          className="p-1 text-text-muted hover:text-text-primary flex items-center gap-1"
+                          title="Copiar"
+                        >
+                          {copiedId === msg.id ? (
+                            <><Check size={12} className="text-success" /><span className="text-xs text-success">Copiado</span></>
+                          ) : (
+                            <><Copy size={12} /><span className="text-xs">Copiar</span></>
+                          )}
+                        </button>
+                      </div>
+                    )}
                   </div>
-                  {msg.role === 'agent' && msg.id !== '1' && (
-                    <div className="flex items-center gap-2 mt-3 pt-2 border-t border-border/50">
-                      <button
-                        onClick={() => handleCopy(msg.id, msg.content)}
-                        className="p-1 text-text-muted hover:text-text-primary flex items-center gap-1"
-                        title="Copiar"
-                      >
-                        {copiedId === msg.id ? (
-                          <><Check size={12} className="text-success" /><span className="text-xs text-success">Copiado</span></>
-                        ) : (
-                          <><Copy size={12} /><span className="text-xs">Copiar</span></>
-                        )}
-                      </button>
-                    </div>
-                  )}
                 </div>
-              </div>
-            ))}
+              ))
+            )}
             {processing && (
               <div className="flex justify-start">
                 <div className="bg-surface-hover rounded-xl px-4 py-3">
@@ -259,6 +291,15 @@ Use as **Ações Rápidas** ao lado ou digite sua pergunta abaixo.`,
                 {action.label}
               </button>
             ))}
+            {messages.length > 0 && (
+              <button
+                onClick={handleClearHistory}
+                className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm text-danger hover:bg-surface-hover transition-colors text-left mt-2 pt-2 border-t border-border"
+              >
+                <Trash2 size={16} className="shrink-0" />
+                Limpar Histórico
+              </button>
+            )}
           </CardBody>
         </Card>
 

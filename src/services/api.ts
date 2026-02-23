@@ -1,5 +1,5 @@
 import { supabase } from '@/lib/supabase'
-import type { Email, EmailAnalysis, DashboardStats, PatternAlert, ResponseTemplate } from '@/types'
+import type { Email, EmailAnalysis, DashboardStats, PatternAlert, ResponseTemplate, ChatMessage } from '@/types'
 
 const SYNC_SERVER_URL = import.meta.env.VITE_SYNC_SERVER_URL || 'http://localhost:3001'
 
@@ -140,6 +140,60 @@ export const api = {
       .eq('id', id)
 
     if (error) throw new Error(error.message)
+  },
+
+  // ─── CHAT MESSAGES ──────────────────────────────────────────
+
+  fetchChatMessages: async (limit = 50) => {
+    const { data, error } = await supabase
+      .from('chat_messages')
+      .select('*')
+      .order('createdAt', { ascending: true })
+      .limit(limit)
+
+    if (error) throw new Error(error.message)
+    return (data || []) as ChatMessage[]
+  },
+
+  saveChatMessage: async (msg: { role: 'user' | 'agent'; content: string; action?: string }) => {
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) throw new Error('Not authenticated')
+
+    const { data, error } = await supabase
+      .from('chat_messages')
+      .insert({ ...msg, userId: user.id })
+      .select()
+      .single()
+
+    if (error) throw new Error(error.message)
+    return data as ChatMessage
+  },
+
+  clearChatHistory: async () => {
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) throw new Error('Not authenticated')
+
+    const { error } = await supabase
+      .from('chat_messages')
+      .delete()
+      .eq('userId', user.id)
+
+    if (error) throw new Error(error.message)
+  },
+
+  // ─── SEND NEW EMAIL ────────────────────────────────────────
+
+  sendNewEmail: async (params: { to: string; subject: string; body: string }) => {
+    const res = await fetch(`${SYNC_SERVER_URL}/api/send-email`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ message: res.statusText }))
+      throw new Error(err.message || 'Erro ao enviar email')
+    }
+    return res.json() as Promise<{ success: boolean }>
   },
 
   // ─── RESPOND ──────────────────────────────────────────────

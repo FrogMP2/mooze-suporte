@@ -150,6 +150,45 @@ app.post('/api/send-reply', async (req, res) => {
   }
 })
 
+// ─── SEND NEW EMAIL ─────────────────────────────────────────
+
+app.post('/api/send-email', async (req, res) => {
+  try {
+    const { to, subject, body } = req.body
+
+    if (!to || !subject || !body) {
+      return res.status(400).json({ message: 'Campos obrigatórios: to, subject, body' })
+    }
+
+    await sendEmail({ to, subject, text: body })
+
+    // Save sent email to DB
+    const sentUser = process.env.RESEND_FROM || 'suporte@mooze.app'
+    const { error } = await supabase.from('emails').insert({
+      messageId: `sent-new-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      from: sentUser,
+      fromName: 'Equipe Mooze',
+      to,
+      subject,
+      body,
+      date: new Date().toISOString(),
+      folder: 'SENT',
+      read: true,
+      status: 'respondido',
+    })
+
+    if (error) {
+      console.error('[SEND] Erro ao salvar email enviado:', error.message)
+    }
+
+    console.log(`[SEND] Novo email enviado para ${to}`)
+    res.json({ success: true })
+  } catch (error) {
+    console.error('[SEND] Erro ao enviar:', error.message)
+    res.status(500).json({ message: 'Erro ao enviar email', error: error.message })
+  }
+})
+
 // ─── AI ANALYSIS (Gemini) ────────────────────────────────────
 
 const GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent'

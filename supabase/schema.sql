@@ -210,6 +210,33 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 -- RPC: Learned Response for a category
 -- ==========================================
 
+-- ==========================================
+-- Tabela: chat_messages (Agent Chat History)
+-- ==========================================
+
+CREATE TABLE chat_messages (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  "userId" UUID NOT NULL,
+  role TEXT NOT NULL CHECK (role IN ('user', 'agent')),
+  content TEXT NOT NULL,
+  action TEXT,
+  "createdAt" TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX idx_chat_messages_user_id ON chat_messages("userId");
+CREATE INDEX idx_chat_messages_created_at ON chat_messages("createdAt");
+
+ALTER TABLE chat_messages ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "users_own_chat" ON chat_messages
+  FOR ALL TO authenticated
+  USING (auth.uid() = "userId")
+  WITH CHECK (auth.uid() = "userId");
+
+-- ==========================================
+-- RPC: Learned Response for a category
+-- ==========================================
+
 CREATE OR REPLACE FUNCTION get_learned_response(cat TEXT)
 RETURNS JSON AS $$
 DECLARE

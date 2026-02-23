@@ -8,6 +8,8 @@ import {
   Send,
   Inbox,
   SendHorizonal,
+  Plus,
+  X,
   Copy,
   Edit3,
   CheckCircle2,
@@ -36,6 +38,11 @@ export default function Emails() {
   const [responseText, setResponseText] = useState('')
   const [editingResponse, setEditingResponse] = useState(false)
   const [responseSource, setResponseSource] = useState<'learned' | 'template' | null>(null)
+  const [showCompose, setShowCompose] = useState(false)
+  const [composeTo, setComposeTo] = useState('')
+  const [composeSubject, setComposeSubject] = useState('')
+  const [composeBody, setComposeBody] = useState('')
+  const [sending, setSending] = useState(false)
 
   useEffect(() => { loadEmails() }, [])
 
@@ -77,6 +84,20 @@ export default function Emails() {
     } catch { /* err */ }
   }
 
+  async function handleSendNewEmail() {
+    if (!composeTo.trim() || !composeSubject.trim() || !composeBody.trim()) return
+    setSending(true)
+    try {
+      await api.sendNewEmail({ to: composeTo.trim(), subject: composeSubject.trim(), body: composeBody.trim() })
+      setComposeTo('')
+      setComposeSubject('')
+      setComposeBody('')
+      setShowCompose(false)
+      await loadEmails()
+    } catch { /* err */ }
+    finally { setSending(false) }
+  }
+
   const filtered = getFilteredEmails()
 
   return (
@@ -104,6 +125,15 @@ export default function Emails() {
             Enviados
           </button>
         </div>
+
+        {/* Compose button */}
+        <button
+          onClick={() => setShowCompose(true)}
+          className="w-full mb-2 flex items-center justify-center gap-1.5 py-2 bg-accent text-white rounded-lg text-[13px] font-medium hover:bg-accent-hover shadow-xs"
+        >
+          <Plus size={14} />
+          Novo Email
+        </button>
 
         {/* Search */}
         <div className="mb-3">
@@ -330,6 +360,65 @@ export default function Emails() {
           </div>
         )}
       </div>
+
+      {/* Compose Modal */}
+      {showCompose && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-surface border border-border rounded-xl shadow-lg w-full max-w-lg">
+            <div className="flex items-center justify-between px-5 py-3 border-b border-border">
+              <h3 className="text-text-primary font-semibold text-[14px]">Novo Email</h3>
+              <button onClick={() => setShowCompose(false)} className="p-1 text-text-muted hover:text-text-primary rounded hover:bg-surface-hover">
+                <X size={16} />
+              </button>
+            </div>
+            <div className="p-5 space-y-3">
+              <div>
+                <label className="block text-text-muted text-[11px] font-medium mb-1">Para</label>
+                <input
+                  type="email"
+                  value={composeTo}
+                  onChange={(e) => setComposeTo(e.target.value)}
+                  placeholder="destinatario@email.com"
+                  className="w-full bg-background border border-border rounded-lg px-3 py-2 text-[13px] text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-accent/20 focus:border-accent"
+                />
+              </div>
+              <div>
+                <label className="block text-text-muted text-[11px] font-medium mb-1">Assunto</label>
+                <input
+                  type="text"
+                  value={composeSubject}
+                  onChange={(e) => setComposeSubject(e.target.value)}
+                  placeholder="Assunto do email"
+                  className="w-full bg-background border border-border rounded-lg px-3 py-2 text-[13px] text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-accent/20 focus:border-accent"
+                />
+              </div>
+              <div>
+                <label className="block text-text-muted text-[11px] font-medium mb-1">Mensagem</label>
+                <textarea
+                  value={composeBody}
+                  onChange={(e) => setComposeBody(e.target.value)}
+                  placeholder="Escreva sua mensagem..."
+                  rows={6}
+                  className="w-full bg-background border border-border rounded-lg px-3 py-2.5 text-[13px] text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-accent/20 focus:border-accent resize-none"
+                />
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 px-5 py-3 border-t border-border">
+              <button onClick={() => setShowCompose(false)} className="px-3 py-1.5 text-text-muted text-[13px] rounded-lg hover:bg-surface-hover">
+                Cancelar
+              </button>
+              <button
+                onClick={handleSendNewEmail}
+                disabled={!composeTo.trim() || !composeSubject.trim() || !composeBody.trim() || sending}
+                className="inline-flex items-center gap-1.5 px-4 py-1.5 bg-accent text-white rounded-lg text-[13px] font-medium hover:bg-accent-hover shadow-xs disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                <Send size={13} />
+                {sending ? 'Enviando...' : 'Enviar'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
