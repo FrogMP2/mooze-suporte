@@ -6,6 +6,8 @@ import {
   Mail,
   Brain,
   Send,
+  Inbox,
+  SendHorizonal,
   Copy,
   Edit3,
   CheckCircle2,
@@ -81,6 +83,28 @@ export default function Emails() {
     <div className="flex gap-4 h-[calc(100vh-48px)]">
       {/* ── Left: Email List ── */}
       <div className="w-[300px] flex flex-col shrink-0">
+        {/* Folder tabs */}
+        <div className="flex mb-2 bg-surface border border-border rounded-lg p-0.5">
+          <button
+            onClick={() => setFilters({ folder: 'INBOX' })}
+            className={cn('flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-md text-[12px] font-medium transition-colors',
+              filters.folder === 'INBOX' ? 'bg-accent text-white shadow-xs' : 'text-text-muted hover:text-text-secondary'
+            )}
+          >
+            <Inbox size={13} />
+            Recebidos
+          </button>
+          <button
+            onClick={() => setFilters({ folder: 'SENT' })}
+            className={cn('flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-md text-[12px] font-medium transition-colors',
+              filters.folder === 'SENT' ? 'bg-accent text-white shadow-xs' : 'text-text-muted hover:text-text-secondary'
+            )}
+          >
+            <SendHorizonal size={13} />
+            Enviados
+          </button>
+        </div>
+
         {/* Search */}
         <div className="mb-3">
           <div className="flex gap-1.5">
@@ -149,7 +173,9 @@ export default function Emails() {
                 <div className="flex items-center justify-between gap-2 mb-0.5">
                   <div className="flex items-center gap-2 min-w-0">
                     {!email.read && <span className="w-1.5 h-1.5 rounded-full bg-accent shrink-0" />}
-                    <p className="text-text-primary text-[13px] font-medium truncate">{email.fromName || email.from}</p>
+                    <p className="text-text-primary text-[13px] font-medium truncate">
+                      {email.folder === 'SENT' ? `Para: ${email.to}` : (email.fromName || email.from)}
+                    </p>
                   </div>
                   <span className="text-text-muted text-[10px] whitespace-nowrap">{timeAgo(email.date)}</span>
                 </div>
@@ -185,7 +211,11 @@ export default function Emails() {
                 <div className="min-w-0">
                   <h2 className="text-text-primary text-[15px] font-semibold leading-snug">{selectedEmail.subject}</h2>
                   <p className="text-text-muted text-[13px] mt-1">
-                    <span className="text-text-primary font-medium">{selectedEmail.fromName || selectedEmail.from}</span>
+                    {selectedEmail.folder === 'SENT' ? (
+                      <><span className="text-text-muted">Para:</span>{' '}<span className="text-text-primary font-medium">{selectedEmail.to}</span></>
+                    ) : (
+                      <span className="text-text-primary font-medium">{selectedEmail.fromName || selectedEmail.from}</span>
+                    )}
                     {' '}&middot;{' '}
                     {formatDate(selectedEmail.date)}
                   </p>
@@ -198,14 +228,16 @@ export default function Emails() {
                     </div>
                   )}
                 </div>
-                <button
-                  onClick={() => handleAnalyze(selectedEmail)}
-                  disabled={analyzing}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-accent text-white rounded-lg text-[13px] font-medium hover:bg-accent-hover disabled:opacity-50 shrink-0 shadow-xs"
-                >
-                  <Brain size={14} className={analyzing ? 'animate-pulse' : ''} />
-                  {analyzing ? 'Analisando...' : 'Analisar'}
-                </button>
+                {selectedEmail.folder !== 'SENT' && (
+                  <button
+                    onClick={() => handleAnalyze(selectedEmail)}
+                    disabled={analyzing}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-accent text-white rounded-lg text-[13px] font-medium hover:bg-accent-hover disabled:opacity-50 shrink-0 shadow-xs"
+                  >
+                    <Brain size={14} className={analyzing ? 'animate-pulse' : ''} />
+                    {analyzing ? 'Analisando...' : 'Analisar'}
+                  </button>
+                )}
               </div>
             </div>
 
@@ -220,8 +252,8 @@ export default function Emails() {
               </div>
             )}
 
-            {/* Response section */}
-            <div className="bg-surface border border-border rounded-xl shadow-xs">
+            {/* Response section (only for received emails) */}
+            {selectedEmail.folder !== 'SENT' && <div className="bg-surface border border-border rounded-xl shadow-xs">
               <div className="px-5 py-3 border-b border-border flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <h3 className="text-text-primary font-medium text-[13px]">Resposta</h3>
@@ -284,7 +316,7 @@ export default function Emails() {
                   </button>
                 </div>
               </div>
-            </div>
+            </div>}
           </div>
         ) : (
           <div className="h-full flex items-center justify-center">

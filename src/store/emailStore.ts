@@ -6,6 +6,7 @@ interface EmailFilters {
   category: EmailCategory | 'all'
   urgency: UrgencyLevel | 'all'
   status: EmailStatus | 'all'
+  folder: 'INBOX' | 'SENT'
   dateFrom?: string
   dateTo?: string
 }
@@ -41,6 +42,7 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
     category: 'all',
     urgency: 'all',
     status: 'all',
+    folder: 'INBOX',
   },
   stats: {
     totalEmails: 0,
@@ -86,13 +88,15 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
   getFilteredEmails: () => {
     const { emails, filters } = get()
     return emails.filter((email) => {
+      if (email.folder !== filters.folder) return false
       if (filters.search) {
         const q = filters.search.toLowerCase()
         const match =
           email.subject.toLowerCase().includes(q) ||
-          email.fromName.toLowerCase().includes(q) ||
-          email.from.toLowerCase().includes(q) ||
-          email.body.toLowerCase().includes(q)
+          (email.fromName || '').toLowerCase().includes(q) ||
+          (email.from || '').toLowerCase().includes(q) ||
+          (email.to || '').toLowerCase().includes(q) ||
+          (email.body || '').toLowerCase().includes(q)
         if (!match) return false
       }
       if (filters.category !== 'all' && email.category !== filters.category) return false

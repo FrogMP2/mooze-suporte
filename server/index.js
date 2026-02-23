@@ -70,15 +70,28 @@ app.post('/api/send-reply', async (req, res) => {
     })
 
     // Save response + update status in Supabase
-    await supabase.from('responses').insert({ emailId, content })
-    await supabase
-      .from('emails')
-      .update({
+    const sentUser = process.env.SMTP_USER || process.env.IMAP_USER
+    await Promise.all([
+      supabase.from('responses').insert({ emailId, content }),
+      supabase.from('emails').update({
         status: 'respondido',
         respondedAt: new Date().toISOString(),
         respondedBy: 'operador',
-      })
-      .eq('id', emailId)
+      }).eq('id', emailId),
+      // Save sent email in emails table with folder 'SENT'
+      supabase.from('emails').insert({
+        messageId: `sent-${emailId}-${Date.now()}`,
+        from: sentUser,
+        fromName: 'Equipe Mooze',
+        to: email.from,
+        subject: `Re: ${email.subject || ''}`,
+        body: content,
+        date: new Date().toISOString(),
+        folder: 'SENT',
+        read: true,
+        status: 'respondido',
+      }),
+    ])
 
     console.log(`[SMTP] Resposta enviada para ${email.from}`)
     res.json({ success: true })
